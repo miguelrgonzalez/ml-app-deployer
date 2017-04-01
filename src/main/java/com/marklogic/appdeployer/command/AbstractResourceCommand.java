@@ -1,10 +1,10 @@
 package com.marklogic.appdeployer.command;
 
-import java.io.File;
-
 import com.marklogic.mgmt.ResourceManager;
 import com.marklogic.mgmt.SaveReceipt;
 import com.marklogic.mgmt.admin.ActionRequiringRestart;
+
+import java.io.File;
 
 /**
  * Provides a basic implementation for creating/updating a resource while an app is being deployed and then deleting it
@@ -16,31 +16,83 @@ public abstract class AbstractResourceCommand extends AbstractUndoableCommand {
     private boolean restartAfterDelete = false;
     private boolean catchExceptionOnDeleteFailure = false;
 
-    protected abstract File[] getResourceDirs(CommandContext context);
+	protected abstract File[] getResourceDirs(CommandContext context);
 
     protected abstract ResourceManager getResourceManager(CommandContext context);
 
     @Override
     public void execute(CommandContext context) {
+	    initializeTaskExecutorIfAsync();
         for (File resourceDir : getResourceDirs(context)) {
             processExecuteOnResourceDir(context, resourceDir);
         }
+        waitForTasksToFinishIfAsync();
     }
 
-    protected void processExecuteOnResourceDir(CommandContext context, File resourceDir) {
+	@Override
+    public void undo(CommandContext context) {
+        if (deleteResourcesOnUndo) {
+	        initializeTaskExecutorIfAsync();
+            for (File resourceDir : getResourceDirs(context)) {
+                processUndoOnResourceDir(context, resourceDir);
+            }
+            waitForTasksToFinishIfAsync();
+        }
+    }
+
+	protected void initializeTaskExecutorIfAsync() {
+		if (isExecuteAsync()) {
+			initializeTaskExecutor();
+		}
+	}
+
+	protected void waitForTasksToFinishIfAsync() {
+    	if (isExecuteAsync()) {
+    		waitForTasksToFinish();
+	    }
+	}
+
+	/**
+	 * Process all of the eligible resource files in the given directory.
+	 *
+	 * @param context
+	 * @param resourceDir
+	 */
+	protected void processExecuteOnResourceDir(final CommandContext context, File resourceDir) {
         if (resourceDir.exists()) {
-            ResourceManager mgr = getResourceManager(context);
+            final ResourceManager mgr = getResourceManager(context);
             if (logger.isInfoEnabled()) {
                 logger.info("Processing files in directory: " + resourceDir.getAbsolutePath());
             }
-            for (File f : listFilesInDirectory(resourceDir)) {
-                if (logger.isInfoEnabled()) {
-                    logger.info("Processing file: " + f.getAbsolutePath());
-                }
-                SaveReceipt receipt = saveResource(mgr, context, f);
-                afterResourceSaved(mgr, context, f, receipt);
+            for (final File f : listFilesInDirectory(resourceDir)) {
+            	if (isExecuteAsync()) {
+            		getTaskExecutor().execute(new Runnable() {
+			            @Override
+			            public void run() {
+				            processFileOnExecute(f, mgr, context);
+			            }
+		            });
+	            } else {
+            		processFileOnExecute(f, mgr, context);
+	            }
             }
         }
+    }
+
+	/**
+	 * Low-level method for processing a single file on execute. Broken out into a separate method so it can be easily
+	 * called asynchronously if needed.
+	 *
+	 * @param f
+	 * @param mgr
+	 * @param context
+	 */
+	protected void processFileOnExecute(File f, ResourceManager mgr, CommandContext context) {
+	    if (logger.isInfoEnabled()) {
+		    logger.info("Processing file: " + f.getAbsolutePath());
+	    }
+	    SaveReceipt receipt = saveResource(mgr, context, f);
+	    afterResourceSaved(mgr, context, f, receipt);
     }
 
     /**
@@ -56,28 +108,46 @@ public abstract class AbstractResourceCommand extends AbstractUndoableCommand {
 
     }
 
-    @Override
-    public void undo(CommandContext context) {
-        if (deleteResourcesOnUndo) {
-            for (File resourceDir : getResourceDirs(context)) {
-                processUndoOnResourceDir(context, resourceDir);
-            }
-        }
-    }
-
-    protected void processUndoOnResourceDir(CommandContext context, File resourceDir) {
+	/**
+	 * Process every eligible file in the given resource directory.
+	 *
+	 * @param context
+	 * @param resourceDir
+	 */
+	protected void processUndoOnResourceDir(final CommandContext context, File resourceDir) {
         if (resourceDir.exists()) {
             if (logger.isInfoEnabled()) {
                 logger.info("Processing files in directory: " + resourceDir.getAbsolutePath());
             }
             final ResourceManager mgr = getResourceManager(context);
-            for (File f : listFilesInDirectory(resourceDir)) {
-                if (logger.isInfoEnabled()) {
-                    logger.info("Processing file: " + f.getAbsolutePath());
-                }
-                deleteResource(mgr, context, f);
+            for (final File f : listFilesInDirectory(resourceDir)) {
+            	if (isExecuteAsync()) {
+            		getTaskExecutor().execute(new Runnable() {
+			            @Override
+			            public void run() {
+				            processFileOnUndo(f, mgr, context);
+			            }
+		            });
+	            } else {
+            		processFileOnUndo(f, mgr, context);
+	            }
             }
         }
+    }
+
+	/**
+	 * Low-level method for processing a single file on undo. Broken out into a separate method so it can be easily
+	 * called asynchronously if needed.
+	 *
+	 * @param f
+	 * @param mgr
+	 * @param context
+	 */
+    protected void processFileOnUndo(File f, ResourceManager mgr, CommandContext context) {
+	    if (logger.isInfoEnabled()) {
+		    logger.info("Processing file: " + f.getAbsolutePath());
+	    }
+	    deleteResource(mgr, context, f);
     }
 
     /**
