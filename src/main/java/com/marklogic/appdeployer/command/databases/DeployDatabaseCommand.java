@@ -163,6 +163,7 @@ public class DeployDatabaseCommand extends AbstractCommand implements UndoableCo
         c.setForestFilename(forestFilename);
         c.setDatabaseName(receipt.getResourceId());
         c.setForestPayload(DeployForestsCommand.DEFAULT_FOREST_PAYLOAD);
+        c.setExecuteAsync(true);
         return c;
     }
 

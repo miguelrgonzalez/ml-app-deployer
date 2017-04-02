@@ -5,7 +5,6 @@ import com.marklogic.mgmt.AbstractResourceManager;
 import com.marklogic.mgmt.ManageClient;
 import com.marklogic.rest.util.Fragment;
 import org.springframework.core.task.TaskExecutor;
-import org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor;
 
 import java.util.HashMap;
 import java.util.Iterator;
@@ -83,9 +82,9 @@ public class ForestManager extends AbstractResourceManager {
     public void saveJsonForests(String json, boolean async) {
         JsonNode node = super.payloadParser.parseJson(json);
         if (node.isArray()) {
-            ThreadPoolTaskExecutor taskExecutor = null;
+            TaskExecutor taskExecutor = null;
             if (async) {
-                taskExecutor = newThreadPoolTaskExecutor();
+                taskExecutor = newTaskExecutor();
             }
             Iterator<JsonNode> iter = node.iterator();
             while (iter.hasNext()) {
@@ -101,9 +100,7 @@ public class ForestManager extends AbstractResourceManager {
                     save(forestJson);
                 }
             }
-            if (async) {
-                taskExecutor.shutdown();
-            }
+            shutdownTaskExecutorIfNecessary(taskExecutor);
         } else {
             save(json);
         }

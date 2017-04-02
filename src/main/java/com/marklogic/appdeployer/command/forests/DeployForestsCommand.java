@@ -1,12 +1,5 @@
 package com.marklogic.appdeployer.command.forests;
 
-import java.io.File;
-import java.util.ArrayList;
-import java.util.List;
-
-import org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor;
-import org.springframework.util.StringUtils;
-
 import com.marklogic.appdeployer.AppConfig;
 import com.marklogic.appdeployer.command.AbstractCommand;
 import com.marklogic.appdeployer.command.CommandContext;
@@ -14,6 +7,11 @@ import com.marklogic.appdeployer.command.SortOrderConstants;
 import com.marklogic.mgmt.databases.DatabaseManager;
 import com.marklogic.mgmt.forests.ForestManager;
 import com.marklogic.mgmt.hosts.HostManager;
+import org.springframework.util.StringUtils;
+
+import java.io.File;
+import java.util.ArrayList;
+import java.util.List;
 
 /**
  * This command is for a simple use case where all the forests created for a database have the same structure,
@@ -119,6 +117,8 @@ public class DeployForestsCommand extends AbstractCommand {
                 i++;
             }
         }
+
+        waitForTasksToFinish();
     }
 
     protected String getForestName(AppConfig appConfig, int forestNumber) {

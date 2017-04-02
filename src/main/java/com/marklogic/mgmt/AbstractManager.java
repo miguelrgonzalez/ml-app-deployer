@@ -1,78 +1,84 @@
 package com.marklogic.mgmt;
 
-import org.springframework.http.ResponseEntity;
-import org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor;
-import org.springframework.util.ClassUtils;
-
 import com.marklogic.client.helper.LoggingObject;
+import com.marklogic.rest.util.TaskExecutorUtil;
+import org.springframework.core.task.TaskExecutor;
+import org.springframework.http.ResponseEntity;
+import org.springframework.scheduling.concurrent.ExecutorConfigurationSupport;
+import org.springframework.util.ClassUtils;
 
 public class AbstractManager extends LoggingObject {
 
-    protected PayloadParser payloadParser = new PayloadParser();
+	protected PayloadParser payloadParser = new PayloadParser();
 
-    /**
-     * Manager classes that need to connect to ML as a user with the admin role should override this to return true.
-     * 
-     * @return
-     */
-    protected boolean useAdminUser() {
-        return false;
-    }
+	/**
+	 * Manager classes that need to connect to ML as a user with the admin role should override this to return true.
+	 *
+	 * @return
+	 */
+	protected boolean useAdminUser() {
+		return false;
+	}
 
-    /**
-     * Assumes the resource name is based on the class name - e.g. RoleManager would have a resource name of "role".
-     * 
-     * @return
-     */
-    protected String getResourceName() {
-        String name = ClassUtils.getShortName(getClass());
-        name = name.replace("Manager", "");
-        return name.toLowerCase();
-    }
+	/**
+	 * Assumes the resource name is based on the class name - e.g. RoleManager would have a resource name of "role".
+	 *
+	 * @return
+	 */
+	protected String getResourceName() {
+		String name = ClassUtils.getShortName(getClass());
+		name = name.replace("Manager", "");
+		return name.toLowerCase();
+	}
 
-    /**
-     * Assumes the field name of the resource ID - which is used to determine existence - is the resource name plus
-     * "-name". So RoleManager would have an ID field name of "role-name".
-     * 
-     * @return
-     */
-    protected String getIdFieldName() {
-        return getResourceName() + "-name";
-    }
+	/**
+	 * Assumes the field name of the resource ID - which is used to determine existence - is the resource name plus
+	 * "-name". So RoleManager would have an ID field name of "role-name".
+	 *
+	 * @return
+	 */
+	protected String getIdFieldName() {
+		return getResourceName() + "-name";
+	}
 
-    protected String getResourceId(String payload) {
-        return payloadParser.getPayloadFieldValue(payload, getIdFieldName());
-    }
+	protected String getResourceId(String payload) {
+		return payloadParser.getPayloadFieldValue(payload, getIdFieldName());
+	}
 
-    protected ResponseEntity<String> putPayload(ManageClient client, String path, String payload) {
-        boolean useAdmin = useAdminUser();
-        if (payloadParser.isJsonPayload(payload)) {
-            return useAdmin ? client.putJsonAsAdmin(path, payload) : client.putJson(path, payload);
-        }
-        return useAdmin ? client.putXmlAsAdmin(path, payload) : client.putXml(path, payload);
-    }
+	protected ResponseEntity<String> putPayload(ManageClient client, String path, String payload) {
+		boolean useAdmin = useAdminUser();
+		if (payloadParser.isJsonPayload(payload)) {
+			return useAdmin ? client.putJsonAsAdmin(path, payload) : client.putJson(path, payload);
+		}
+		return useAdmin ? client.putXmlAsAdmin(path, payload) : client.putXml(path, payload);
+	}
 
-    protected ResponseEntity<String> postPayload(ManageClient client, String path, String payload) {
-        boolean useAdmin = useAdminUser();
-        if (payloadParser.isJsonPayload(payload)) {
-            return useAdmin ? client.postJsonAsAdmin(path, payload) : client.postJson(path, payload);
-        }
-        return useAdmin ? client.postXmlAsAdmin(path, payload) : client.postXml(path, payload);
-    }
+	protected ResponseEntity<String> postPayload(ManageClient client, String path, String payload) {
+		boolean useAdmin = useAdminUser();
+		if (payloadParser.isJsonPayload(payload)) {
+			return useAdmin ? client.postJsonAsAdmin(path, payload) : client.postJson(path, payload);
+		}
+		return useAdmin ? client.postXmlAsAdmin(path, payload) : client.postXml(path, payload);
+	}
 
-    /**
-     * Some management operations can benefit from making multiple calls in parallel to the Manage API. This is a
-     * convenience method for obtaining a Spring ThreadPoolTaskExecutor to simplify the job.
-     *
-     * @return
-     */
-    protected ThreadPoolTaskExecutor newThreadPoolTaskExecutor() {
-        ThreadPoolTaskExecutor taskExecutor = new ThreadPoolTaskExecutor();
-        taskExecutor.setCorePoolSize(16);
-        taskExecutor.setWaitForTasksToCompleteOnShutdown(true);
-        taskExecutor.setAwaitTerminationSeconds(60 * 60 * 12);
-        taskExecutor.setThreadNamePrefix(ClassUtils.getShortName(getClass()) + "-");
-        taskExecutor.afterPropertiesSet();
-        return taskExecutor;
-    }
+	/**
+	 * Some management operations can benefit from making multiple calls in parallel to the Manage API. This is a
+	 * convenience method for obtaining a Spring TaskExecutor to do the job.
+	 *
+	 * @return
+	 */
+	protected TaskExecutor newTaskExecutor() {
+		return TaskExecutorUtil.newThreadPoolTaskExecutor(getClass());
+	}
+
+	/**
+	 * After submitting tasks to the given TaskExecutor, wait for it to shutdown if necessary.
+	 *
+	 * @param taskExecutor
+	 */
+	protected void shutdownTaskExecutorIfNecessary(TaskExecutor taskExecutor) {
+		if (taskExecutor != null && taskExecutor instanceof ExecutorConfigurationSupport) {
+			((ExecutorConfigurationSupport) taskExecutor).shutdown();
+		}
+	}
 }

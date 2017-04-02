@@ -5,7 +5,6 @@ import com.marklogic.mgmt.ManageClient;
 import com.marklogic.mgmt.forests.ForestManager;
 import com.marklogic.rest.util.Fragment;
 import org.springframework.core.task.TaskExecutor;
-import org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor;
 
 import java.util.List;
 
@@ -76,13 +75,13 @@ public class DatabaseManager extends AbstractResourceManager {
 		List<String> primaryForestIds = getPrimaryForestIds(databaseIdOrName);
 		detachForests(databaseIdOrName);
 		final ForestManager forestManager = new ForestManager(getManageClient());
-		ThreadPoolTaskExecutor taskExecutor = null;
+		TaskExecutor taskExecutor = null;
 		if (deleteForestsAsync) {
-			taskExecutor = newThreadPoolTaskExecutor();
+			taskExecutor = newTaskExecutor();
 		}
 		for (final String forestId : primaryForestIds) {
 			if (taskExecutor != null) {
-				taskExecutor.submit(new Runnable() {
+				taskExecutor.execute(new Runnable() {
 					@Override
 					public void run() {
 						forestManager.delete(forestId, ForestManager.DELETE_LEVEL_FULL, ForestManager.REPLICAS_DELETE);
@@ -92,9 +91,7 @@ public class DatabaseManager extends AbstractResourceManager {
 				forestManager.delete(forestId, ForestManager.DELETE_LEVEL_FULL, ForestManager.REPLICAS_DELETE);
 			}
 		}
-		if (taskExecutor != null) {
-			taskExecutor.shutdown();
-		}
+		shutdownTaskExecutorIfNecessary(taskExecutor);
 	}
 
 	public void detachForests(String databaseIdOrName) {
@@ -149,13 +146,13 @@ public class DatabaseManager extends AbstractResourceManager {
 	public void deleteReplicaForests(String databaseNameOrId) {
 		logger.info(format("Deleting replica forests (if any exist) for database %s", databaseNameOrId));
 		final ForestManager mgr = new ForestManager(getManageClient());
-		ThreadPoolTaskExecutor taskExecutor = null;
+		TaskExecutor taskExecutor = null;
 		if (deleteForestsAsync) {
-			taskExecutor = newThreadPoolTaskExecutor();
+			taskExecutor = newTaskExecutor();
 		}
 		for (final String forestId : getPrimaryForestIds(databaseNameOrId)) {
 			if (taskExecutor != null) {
-				taskExecutor.submit(new Runnable() {
+				taskExecutor.execute(new Runnable() {
 					@Override
 					public void run() {
 						mgr.deleteReplicas(forestId);
@@ -165,9 +162,7 @@ public class DatabaseManager extends AbstractResourceManager {
 				mgr.deleteReplicas(forestId);
 			}
 		}
-		if (taskExecutor != null) {
-			taskExecutor.shutdown();
-		}
+		shutdownTaskExecutorIfNecessary(taskExecutor);
 		logger.info(format("Finished deleting replica forests for database %s", databaseNameOrId));
 	}
 
