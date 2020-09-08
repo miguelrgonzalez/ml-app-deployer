@@ -13,31 +13,63 @@ public class ForeignReplica {
 	@XmlElement(name = "foreign-database-name")
 	private String foreignDatabaseName;
 
-	@XmlElement(name = "foreign-forest-name")
-	private String foreignForestName;
+	@XmlElement(name = "connect-forests-by-name")
+	private Boolean connectForestsByName;
 
-    public String getForeignClusterName() {
-        return foreignClusterName;
-    }
+	@XmlElement(name = "lag-limit")
+	private Integer lagLimit;
 
-    public void setForeignClusterName(String foreignClusterName) {
-        this.foreignClusterName = foreignClusterName;
-    }
+	@XmlElement(name = "replication-enabled")
+	private Boolean replicationEnabled;
 
-    public String getForeignDatabaseName() {
-        return foreignDatabaseName;
-    }
+	@XmlElement(name = "queue-size")
+	private Integer queueSize;
 
-    public void setForeignDatabaseName(String foreignDatabaseName) {
-        this.foreignDatabaseName = foreignDatabaseName;
-    }
+	public String getForeignClusterName() {
+		return foreignClusterName;
+	}
 
-    public String getForeignForestName() {
-        return foreignForestName;
-    }
+	public void setForeignClusterName(String foreignClusterName) {
+		this.foreignClusterName = foreignClusterName;
+	}
 
-    public void setForeignForestName(String foreignForestName) {
-        this.foreignForestName = foreignForestName;
-    }
+	public String getForeignDatabaseName() {
+		return foreignDatabaseName;
+	}
 
+	public void setForeignDatabaseName(String foreignDatabaseName) {
+		this.foreignDatabaseName = foreignDatabaseName;
+	}
+
+	public Boolean getConnectForestsByName() {
+		return connectForestsByName;
+	}
+
+	public void setConnectForestsByName(Boolean connectForestsByName) {
+		this.connectForestsByName = connectForestsByName;
+	}
+
+	public Integer getLagLimit() {
+		return lagLimit;
+	}
+
+	public void setLagLimit(Integer lagLimit) {
+		this.lagLimit = lagLimit;
+	}
+
+	public Boolean getReplicationEnabled() {
+		return replicationEnabled;
+	}
+
+	public void setReplicationEnabled(Boolean replicationEnabled) {
+		this.replicationEnabled = replicationEnabled;
+	}
+
+	public Integer getQueueSize() {
+		return queueSize;
+	}
+
+	public void setQueueSize(Integer queueSize) {
+		this.queueSize = queueSize;
+	}
 }

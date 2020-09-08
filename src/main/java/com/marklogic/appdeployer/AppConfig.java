@@ -1,8 +1,10 @@
 package com.marklogic.appdeployer;
 
+import com.marklogic.appdeployer.command.forests.ForestNamingStrategy;
+import com.marklogic.appdeployer.command.forests.ReplicaBuilderStrategy;
+import com.marklogic.appdeployer.util.MapPropertiesSource;
 import com.marklogic.client.DatabaseClient;
 import com.marklogic.client.DatabaseClientFactory;
-import com.marklogic.client.DatabaseClientFactory.Authentication;
 import com.marklogic.client.DatabaseClientFactory.SSLHostnameVerifier;
 import com.marklogic.client.ext.ConfiguredDatabaseClientFactory;
 import com.marklogic.client.ext.DatabaseClientConfig;
@@ -10,9 +12,16 @@ import com.marklogic.client.ext.DefaultConfiguredDatabaseClientFactory;
 import com.marklogic.client.ext.SecurityContextType;
 import com.marklogic.client.ext.modulesloader.impl.PropertiesModuleManager;
 import com.marklogic.client.ext.modulesloader.ssl.SimpleX509TrustManager;
+import com.marklogic.client.ext.ssl.SslUtil;
+import com.marklogic.client.ext.tokenreplacer.DefaultTokenReplacer;
 import com.marklogic.client.ext.tokenreplacer.PropertiesSource;
+import com.marklogic.client.ext.tokenreplacer.RoxyTokenReplacer;
+import com.marklogic.client.ext.tokenreplacer.TokenReplacer;
+import org.springframework.util.StringUtils;
 
 import javax.net.ssl.SSLContext;
+import javax.net.ssl.X509TrustManager;
+import java.io.File;
 import java.io.FileFilter;
 import java.util.*;
 import java.util.regex.Pattern;
@@ -37,13 +46,6 @@ public class AppConfig {
     public static final String DEFAULT_APP_NAME = "my-app";
 
     /**
-     * These are assumed as sensible defaults in a development environment, where teams often use admin/admin for the
-     * admin login. They are of course expected to change in a real environment.
-     */
-    public static final String DEFAULT_USERNAME = "admin";
-    public static final String DEFAULT_PASSWORD = "admin";
-
-    /**
      * This is set purely for development purposes so that an app can be configured without specifying a port. The
      * v1/rest-apis endpoint will select an open port if none is provided, but some work is then required to figure out
      * what that port is before modules are loaded.
@@ -60,15 +62,29 @@ public class AppConfig {
     public final static String DEFAULT_GROUP = "Default";
 
     private String name = DEFAULT_APP_NAME;
-    private String host = DEFAULT_HOST;
+
+	/**
+	 * These are assumed as sensible defaults in a development environment, where teams often use admin/admin for the
+	 * admin login. They are of course expected to change in a real environment.
+	 */
+	public static final String DEFAULT_USERNAME = "admin";
+	public static final String DEFAULT_PASSWORD = "admin";
+
+	private String host = DEFAULT_HOST;
 
     private boolean catchDeployExceptions = false;
     private boolean catchUndeployExceptions = false;
 
+    private CmaConfig cmaConfig;
+    private boolean mergeResources = true;
+
+    private boolean addHostNameTokens = false;
+
     // Used to construct DatabaseClient instances based on inputs defined in this class
     private ConfiguredDatabaseClientFactory configuredDatabaseClientFactory = new DefaultConfiguredDatabaseClientFactory();
 
-    // Username/password combo for using the client REST API - e.g. to load modules
+    // Connection info for using the client REST API - e.g. to load modules
+	private DatabaseClient.ConnectionType restConnectionType;
 	private SecurityContextType restSecurityContextType = SecurityContextType.DIGEST;
     private String restAdminUsername = DEFAULT_USERNAME;
     private String restAdminPassword = DEFAULT_PASSWORD;
@@ -77,12 +93,16 @@ public class AppConfig {
     private String restCertFile;
     private String restCertPassword;
     private String restExternalName;
-    @Deprecated
-    private Authentication restAuthentication;
-    private Integer restPort = DEFAULT_PORT;
+    private X509TrustManager restTrustManager;
+	private boolean restUseDefaultKeystore;
+	private String restSslProtocol;
+	private String restTrustManagementAlgorithm;
+
+	private Integer restPort = DEFAULT_PORT;
     private Integer testRestPort;
 
-    // Username/password combo for using the App Services client REST API - e.g. to load non-REST API modules
+    // Connection info for using the App Services client REST API - e.g. to load non-REST API modules
+	private DatabaseClient.ConnectionType appServicesConnectionType;
     private SecurityContextType appServicesSecurityContextType = SecurityContextType.DIGEST;
 	private String appServicesUsername = DEFAULT_USERNAME;
 	private String appServicesPassword = DEFAULT_PASSWORD;
@@ -92,8 +112,10 @@ public class AppConfig {
 	private String appServicesCertFile;
 	private String appServicesCertPassword;
 	private String appServicesExternalName;
-	@Deprecated
-	private Authentication appServicesAuthentication;
+	private X509TrustManager appServicesTrustManager;
+	private boolean appServicesUseDefaultKeystore;
+	private String appServicesSslProtocol;
+	private String appServicesTrustManagementAlgorithm;
 
     // These can all be set to override the default names that are generated off of the "name" attribute.
     private String groupName = DEFAULT_GROUP;
@@ -104,25 +126,28 @@ public class AppConfig {
     private String testContentDatabaseName;
     private String modulesDatabaseName;
     private String triggersDatabaseName;
+    private String cpfDatabaseName;
     private String schemasDatabaseName;
 
     private List<String> modulePaths;
 	private boolean staticCheckAssets = false;
 	private boolean staticCheckLibraryAssets = false;
 	private boolean bulkLoadAssets = true;
-	private String moduleTimestampsPath = PropertiesModuleManager.DEFAULT_FILE_PATH;
+	private String moduleTimestampsPath;
+	private boolean moduleTimestampsUseHost = true;
 	private boolean deleteTestModules = false;
 	private String deleteTestModulesPattern = "/test/**";
-	private int modulesLoaderThreadCount = 8;
+	private int modulesLoaderThreadCount = 1;
+	private Integer modulesLoaderBatchSize;
+	private boolean incrementalDeploy = false;
 
-    private String schemasPath;
-    private ConfigDir configDir;
+    private List<String> schemaPaths;
+    private boolean tdeValidationEnabled = true;
+
+    private List<ConfigDir> configDirs;
 
     // Passed into the PayloadTokenReplacer that subclasses of AbstractCommand use
     private Map<String, String> customTokens = new HashMap<>();
-
-    // Allows for creating a triggers database without a config file for one
-    private boolean createTriggersDatabase = false;
 
     // Controls whether forests are created when a database is created
     private boolean createForests = true;
@@ -133,7 +158,7 @@ public class AppConfig {
     // Controls whether replicas are deleted or not when undeploying a database
     private boolean deleteReplicas = true;
 
-    private boolean sortRolesByDependencies = true;
+    private boolean sortOtherDatabaseByDependencies = true;
 
     // As defined by the REST API
     private String modulePermissions = "rest-admin,read,rest-admin,update,rest-extension-user,execute";
@@ -148,12 +173,14 @@ public class AppConfig {
     private Integer contentForestsPerHost;
 
     // Comma-delimited string used for configuring forest replicas
-    private String databaseNamesAndReplicaCounts;
+    private Map<String, Integer> databaseNamesAndReplicaCounts;
 
     // Comma-delimited string of database names that should only have forests (most likely just one) created on one host
     private Set<String> databasesWithForestsOnOneHost;
 
-    private Map<String, Set<String>> databaseHosts;
+    private Map<String, List<String>> databaseHosts;
+    private Map<String, List<String>> databaseGroups;
+    private Map<String, String> hostGroups;
 
     // Data/fast/large directories for default forests
     private String forestDataDirectory;
@@ -161,10 +188,10 @@ public class AppConfig {
     private String forestLargeDataDirectory;
 
     // Comma-delimited string of database names and data directories
-    private Map<String, String> databaseDataDirectories;
+    private Map<String, List<String>> databaseDataDirectories;
     private Map<String, String> databaseFastDataDirectories;
     private Map<String, String> databaseLargeDataDirectories;
-    private Map<String, String> databaseReplicaDataDirectories;
+    private Map<String, List<String>> databaseReplicaDataDirectories;
     private Map<String, String> databaseReplicaFastDataDirectories;
     private Map<String, String> databaseReplicaLargeDataDirectories;
 
@@ -173,6 +200,12 @@ public class AppConfig {
     private String replicaForestLargeDataDirectory;
     private String replicaForestFastDataDirectory;
 
+    // Allows for customizing how forests are named per database
+    private Map<String, ForestNamingStrategy> forestNamingStrategies = new HashMap<>();
+
+    // Allows for customizing how replicas are built for all databases
+    private ReplicaBuilderStrategy replicaBuilderStrategy;
+
     // Path to use for DeployFlexrepCommand
     private String flexrepPath;
 
@@ -180,10 +213,10 @@ public class AppConfig {
     private boolean replaceTokensInModules = true;
     // Whether or not to prefix each module token with "@ml."
     private boolean useRoxyTokenPrefix = false;
-    // Additional PropertiesSources instance to use for replacing module tokens
-    private List<PropertiesSource> moduleTokensPropertiesSources = new ArrayList<>();
 
-    private Map<String, Integer> forestCounts = new HashMap<>();
+	private Pattern moduleFilenamesIncludePattern;
+
+	private Map<String, Integer> forestCounts = new HashMap<>();
 
     // Entity Services properties
     private String modelsPath = "data/entity-services";
@@ -194,26 +227,54 @@ public class AppConfig {
 	private boolean generateDatabaseProperties = true;
 	private boolean generateExtractionTemplate = true;
 	private boolean generateSearchOptions = true;
+	private String modelsDatabase;
 
 	private String[] resourceFilenamesToIgnore;
 	private Pattern resourceFilenamesExcludePattern;
 	private Pattern resourceFilenamesIncludePattern;
 
+	// Properties to exclude from resource payloads
+	private String[] excludeProperties;
+	// Properties to include in resource payloads
+	private String[] includeProperties;
+
+	private boolean updateMimetypeWhenPropertiesAreEqual = false;
+
 	private Map<String, Object> additionalProperties = new HashMap<>();
 
+	private File projectDir;
+
+	private DataConfig dataConfig;
+	private PluginConfig pluginConfig;
+
 	public AppConfig() {
-        this(DEFAULT_MODULES_PATH, DEFAULT_SCHEMAS_PATH);
+        this(null);
     }
 
-    public AppConfig(String defaultModulePath) {
-        this(defaultModulePath, DEFAULT_SCHEMAS_PATH);
-    }
+    public AppConfig(File projectDir) {
+		this.projectDir = projectDir;
 
-    public AppConfig(String defaultModulePath, String defaultSchemasPath) {
-        modulePaths = new ArrayList<String>();
-        modulePaths.add(defaultModulePath);
-        configDir = new ConfigDir();
-        schemasPath = defaultSchemasPath;
+		dataConfig = new DataConfig(projectDir);
+		pluginConfig = new PluginConfig(projectDir);
+
+		// As of 3.15.0, defaulting everything except servers to use CMA. Changes to servers, such as changing group or
+	    // port number, cause conflicts with CMA.
+		cmaConfig = new CmaConfig(true);
+		cmaConfig.setDeployServers(false);
+
+		modulePaths = new ArrayList<>();
+		String path = projectDir != null ? new File(projectDir, DEFAULT_MODULES_PATH).getAbsolutePath() : DEFAULT_MODULES_PATH;
+		modulePaths.add(path);
+
+	    String defaultSchemasPath = projectDir != null ? new File(projectDir, DEFAULT_SCHEMAS_PATH).getAbsolutePath() : DEFAULT_SCHEMAS_PATH;
+	    schemaPaths = new ArrayList<>();
+	    schemaPaths.add(defaultSchemasPath);
+
+	    configDirs = new ArrayList<>();
+	    configDirs.add(ConfigDir.withProjectDir(projectDir));
+
+	    moduleTimestampsPath = projectDir != null ? new File(projectDir, PropertiesModuleManager.DEFAULT_FILE_PATH).getAbsolutePath()
+		    : PropertiesModuleManager.DEFAULT_FILE_PATH;
     }
 
 	public void populateCustomTokens(PropertiesSource propertiesSource) {
@@ -249,14 +310,44 @@ public class AppConfig {
 		}
 	}
 
+	/**
+	 * Builds a TokenReplacer based on the customTokens map held by this class.
+	 *
+	 * @return
+	 */
+	public TokenReplacer buildTokenReplacer() {
+		DefaultTokenReplacer r = isUseRoxyTokenPrefix() ? new RoxyTokenReplacer() : new DefaultTokenReplacer();
+		final Map<String, String> customTokens = getCustomTokens();
+		if (customTokens != null) {
+			r.addPropertiesSource(new MapPropertiesSource(customTokens));
+		}
+		return r;
+	}
+
     public void setSimpleSslConfig() {
-		setRestSslContext(SimpleX509TrustManager.newSSLContext());
-		setRestSslHostnameVerifier(DatabaseClientFactory.SSLHostnameVerifier.ANY);
+		setSimpleSslConfig(null);
+    }
+
+	/**
+	 * @param protocol the name of the SSL/TLS protocol to use; if null, will use whatever SimpleX509TrustManager defaults to
+	 */
+	public void setSimpleSslConfig(String protocol) {
+	    setRestSslContext(protocol != null ? SimpleX509TrustManager.newSSLContext(protocol) : SimpleX509TrustManager.newSSLContext());
+	    setRestSslHostnameVerifier(DatabaseClientFactory.SSLHostnameVerifier.ANY);
+	    setRestTrustManager(new SimpleX509TrustManager());
     }
 
     public void setAppServicesSimpleSslConfig() {
-		setAppServicesSslContext(SimpleX509TrustManager.newSSLContext());
-		setAppServicesSslHostnameVerifier(DatabaseClientFactory.SSLHostnameVerifier.ANY);
+		setAppServicesSimpleSslConfig(null);
+    }
+
+	/**
+	 * @param protocol the name of the SSL/TLS protocol to use; if null, will use whatever SimpleX509TrustManager defaults to
+	 */
+    public void setAppServicesSimpleSslConfig(String protocol) {
+	    setAppServicesSslContext(protocol != null ? SimpleX509TrustManager.newSSLContext(protocol) : SimpleX509TrustManager.newSSLContext());
+	    setAppServicesSslHostnameVerifier(DatabaseClientFactory.SSLHostnameVerifier.ANY);
+	    setAppServicesTrustManager(new SimpleX509TrustManager());
     }
 
     /**
@@ -279,14 +370,24 @@ public class AppConfig {
     }
 
     public DatabaseClientConfig newRestDatabaseClientConfig(int port) {
-	    DatabaseClientConfig config = new DatabaseClientConfig(getHost(), port, getRestAdminUsername(), getRestAdminPassword());
-	    config.setAuthentication(getRestAuthentication());
+	    DatabaseClientConfig config = new DatabaseClientConfig(host, port, restAdminUsername, restAdminPassword);
+	    config.setCertFile(restCertFile);
+	    config.setCertPassword(restCertPassword);
+	    config.setConnectionType(restConnectionType);
+	    config.setExternalName(restExternalName);
 	    config.setSecurityContextType(restSecurityContextType);
-	    config.setSslHostnameVerifier(getRestSslHostnameVerifier());
-	    config.setSslContext(getRestSslContext());
-	    config.setCertFile(getRestCertFile());
-	    config.setCertPassword(getRestCertPassword());
-	    config.setExternalName(getRestExternalName());
+
+	    if (restUseDefaultKeystore) {
+		    config.setSslProtocol(StringUtils.hasText(restSslProtocol) ? restSslProtocol : SslUtil.DEFAULT_SSL_PROTOCOL);
+		    config.setTrustManagementAlgorithm(restTrustManagementAlgorithm);
+		    config.setSslHostnameVerifier(restSslHostnameVerifier != null ? restSslHostnameVerifier : SSLHostnameVerifier.ANY);
+	    }
+	    else {
+		    config.setSslContext(restSslContext);
+		    config.setTrustManager(restTrustManager);
+		    config.setSslHostnameVerifier(restSslHostnameVerifier);
+	    }
+
 	    return config;
     }
 
@@ -308,15 +409,25 @@ public class AppConfig {
     }
 
     public DatabaseClient newAppServicesDatabaseClient(String databaseName) {
-	    DatabaseClientConfig config = new DatabaseClientConfig(getHost(), getAppServicesPort(), getAppServicesUsername(), getAppServicesPassword());
+	    DatabaseClientConfig config = new DatabaseClientConfig(host, appServicesPort, appServicesUsername, appServicesPassword);
+	    config.setCertFile(appServicesCertFile);
+	    config.setCertPassword(appServicesCertPassword);
+	    config.setConnectionType(appServicesConnectionType);
 	    config.setDatabase(databaseName);
-	    config.setAuthentication(getAppServicesAuthentication());
+	    config.setExternalName(appServicesExternalName);
 	    config.setSecurityContextType(appServicesSecurityContextType);
-	    config.setSslHostnameVerifier(getAppServicesSslHostnameVerifier());
-	    config.setSslContext(getAppServicesSslContext());
-	    config.setCertFile(getAppServicesCertFile());
-	    config.setCertPassword(getAppServicesCertPassword());
-	    config.setExternalName(getAppServicesExternalName());
+
+	    if (appServicesUseDefaultKeystore) {
+		    config.setSslProtocol(StringUtils.hasText(appServicesSslProtocol) ? appServicesSslProtocol : SslUtil.DEFAULT_SSL_PROTOCOL);
+		    config.setTrustManagementAlgorithm(appServicesTrustManagementAlgorithm);
+		    config.setSslHostnameVerifier(appServicesSslHostnameVerifier != null ? appServicesSslHostnameVerifier : SSLHostnameVerifier.ANY);
+	    }
+	    else {
+		    config.setSslContext(appServicesSslContext);
+		    config.setTrustManager(appServicesTrustManager);
+		    config.setSslHostnameVerifier(appServicesSslHostnameVerifier);
+	    }
+
 	    return configuredDatabaseClientFactory.newDatabaseClient(config);
     }
 
@@ -477,17 +588,6 @@ public class AppConfig {
     /**
      * @return a list of all the paths from which modules should be loaded into a REST API server modules database
      */
-    public String getSchemasPath() {
-        return schemasPath;
-    }
-
-    public void setSchemasPath(String schemasPath) {
-        this.schemasPath = schemasPath;
-    }
-
-    /**
-     * @return a list of all the paths from which modules should be loaded into a REST API server modules database
-     */
     public List<String> getModulePaths() {
         return modulePaths;
     }
@@ -508,31 +608,29 @@ public class AppConfig {
         this.groupName = groupName;
     }
 
-    /**
-     * @return the MarkLogic Java Client {@code Authentication} object that is used for authenticating with a REST API
-     * server for loading modules
-     */
-    @Deprecated
-    public Authentication getRestAuthentication() {
-        return restAuthentication;
+	/**
+	 * Starting in 3.3.0, use this when you only care about the first ConfigDir in the List of ConfigDirs maintained by
+	 * this class.
+	 *
+	 * @return
+	 */
+	public ConfigDir getFirstConfigDir() {
+	    if (configDirs == null || configDirs.isEmpty()) {
+		    this.configDirs = new ArrayList<>();
+		    this.configDirs.add(ConfigDir.withProjectDir(this.projectDir));
+	    }
+	    return configDirs.get(0);
     }
 
-    @Deprecated
-    public void setRestAuthentication(Authentication authentication) {
-        this.restAuthentication = authentication;
-    }
-
-    /**
-     * @return a {@code ConfigDir} instance that defines the location of the configuration directory (where files are
-     * stored that are then loaded via MarkLogic Management API endpoints) as well as paths to specific
-     * resources within that directory
-     */
-    public ConfigDir getConfigDir() {
-        return configDir;
-    }
-
-    public void setConfigDir(ConfigDir configDir) {
-        this.configDir = configDir;
+	/**
+	 * As of 3.3.0, this is instead clearing and adding the ConfigDir to the List of ConfigDirs that this class now
+	 * maintains.
+	 *
+	 * @param configDir
+	 */
+	public void setConfigDir(ConfigDir configDir) {
+		this.configDirs = new ArrayList<>();
+		this.configDirs.add(configDir);
     }
 
     /**
@@ -546,18 +644,6 @@ public class AppConfig {
 
     public void setCustomTokens(Map<String, String> customTokens) {
         this.customTokens = customTokens;
-    }
-
-    /**
-     * @return whether a triggers database should be created by default; as of version 2.9.0, this defaults to false;
-     * defaulted to true prior to that.
-     */
-    public boolean isCreateTriggersDatabase() {
-        return createTriggersDatabase;
-    }
-
-    public void setCreateTriggersDatabase(boolean createTriggerDatabase) {
-        this.createTriggersDatabase = createTriggerDatabase;
     }
 
     /**
@@ -598,14 +684,6 @@ public class AppConfig {
 
     public void setContentForestsPerHost(Integer contentForestsPerHost) {
         this.contentForestsPerHost = contentForestsPerHost;
-    }
-
-    public String getDatabaseNamesAndReplicaCounts() {
-        return databaseNamesAndReplicaCounts;
-    }
-
-    public void setDatabaseNamesAndReplicaCounts(String databaseNamesAndReplicaCounts) {
-        this.databaseNamesAndReplicaCounts = databaseNamesAndReplicaCounts;
     }
 
     public String getModulePermissions() {
@@ -670,14 +748,6 @@ public class AppConfig {
 
     public void setUseRoxyTokenPrefix(boolean useRoxyTokenPrefix) {
         this.useRoxyTokenPrefix = useRoxyTokenPrefix;
-    }
-
-    public List<PropertiesSource> getModuleTokensPropertiesSources() {
-        return moduleTokensPropertiesSources;
-    }
-
-    public void setModuleTokensPropertiesSources(List<PropertiesSource> moduleTokensPropertiesSources) {
-        this.moduleTokensPropertiesSources = moduleTokensPropertiesSources;
     }
 
 	public boolean isStaticCheckAssets() {
@@ -825,16 +895,6 @@ public class AppConfig {
 		this.appServicesSslHostnameVerifier = appServicesSslHostnameVerifier;
 	}
 
-	@Deprecated
-	public Authentication getAppServicesAuthentication() {
-		return appServicesAuthentication;
-	}
-
-	@Deprecated
-	public void setAppServicesAuthentication(Authentication appServicesAuthentication) {
-		this.appServicesAuthentication = appServicesAuthentication;
-	}
-
 	public String getReplicaForestDataDirectory() {
 		return replicaForestDataDirectory;
 	}
@@ -881,14 +941,6 @@ public class AppConfig {
 
 	public void setAppServicesPassword(String appServicesPassword) {
 		this.appServicesPassword = appServicesPassword;
-	}
-
-	public boolean isSortRolesByDependencies() {
-		return sortRolesByDependencies;
-	}
-
-	public void setSortRolesByDependencies(boolean sortRolesByDependencies) {
-		this.sortRolesByDependencies = sortRolesByDependencies;
 	}
 
 	public boolean isDeleteTestModules() {
@@ -1003,11 +1055,11 @@ public class AppConfig {
 		this.modulesLoaderThreadCount = modulesLoaderThreadCount;
 	}
 
-	public Map<String, String> getDatabaseDataDirectories() {
+	public Map<String, List<String>> getDatabaseDataDirectories() {
 		return databaseDataDirectories;
 	}
 
-	public void setDatabaseDataDirectories(Map<String, String> databaseDataDirectories) {
+	public void setDatabaseDataDirectories(Map<String, List<String>> databaseDataDirectories) {
 		this.databaseDataDirectories = databaseDataDirectories;
 	}
 
@@ -1051,11 +1103,11 @@ public class AppConfig {
 		this.forestLargeDataDirectory = forestLargeDataDirectory;
 	}
 
-	public Map<String, String> getDatabaseReplicaDataDirectories() {
+	public Map<String, List<String>> getDatabaseReplicaDataDirectories() {
 		return databaseReplicaDataDirectories;
 	}
 
-	public void setDatabaseReplicaDataDirectories(Map<String, String> databaseReplicaDataDirectories) {
+	public void setDatabaseReplicaDataDirectories(Map<String, List<String>> databaseReplicaDataDirectories) {
 		this.databaseReplicaDataDirectories = databaseReplicaDataDirectories;
 	}
 
@@ -1091,6 +1143,13 @@ public class AppConfig {
 		this.catchUndeployExceptions = catchUndeployExceptions;
 	}
 
+	public boolean isDatabaseWithForestsOnOneHost(String databaseName) {
+    	if (databasesWithForestsOnOneHost == null) {
+    		return false;
+	    }
+    	return databasesWithForestsOnOneHost.contains(databaseName);
+	}
+
 	public Set<String> getDatabasesWithForestsOnOneHost() {
 		return databasesWithForestsOnOneHost;
 	}
@@ -1099,11 +1158,281 @@ public class AppConfig {
 		this.databasesWithForestsOnOneHost = databasesWithForestsOnOneHost;
 	}
 
-	public Map<String, Set<String>> getDatabaseHosts() {
+	public Map<String, List<String>> getDatabaseHosts() {
 		return databaseHosts;
 	}
 
-	public void setDatabaseHosts(Map<String, Set<String>> databaseHosts) {
+	public void setDatabaseHosts(Map<String, List<String>> databaseHosts) {
 		this.databaseHosts = databaseHosts;
+	}
+
+	public void setExcludeProperties(String... excludeProperties) {
+    	if (this.includeProperties != null && this.includeProperties.length > 0) {
+		    throw new IllegalStateException("Setting excludeProperties and includeProperties at the same time is not permitted");
+	    }
+    	this.excludeProperties = excludeProperties;
+	}
+
+	public String[] getExcludeProperties() {
+    	return this.excludeProperties;
+	}
+
+	public void setIncludeProperties(String... includeProperties) {
+		if (this.excludeProperties != null && this.excludeProperties.length > 0) {
+			throw new IllegalStateException("Setting excludeProperties and includeProperties at the same time is not permitted");
+		}
+    	this.includeProperties = includeProperties;
+	}
+
+	public String[] getIncludeProperties() {
+    	return this.includeProperties;
+    }
+
+    public Map<String, List<String>> getDatabaseGroups() {
+		return databaseGroups;
+	}
+
+	public void setDatabaseGroups(Map<String, List<String>> databaseGroups) {
+		this.databaseGroups = databaseGroups;
+	}
+
+    public Map<String, String> getHostGroups() {
+		return hostGroups;
+	}
+
+	public void setHostGroups(Map<String, String> hostGroups) {
+		this.hostGroups = hostGroups;
+	}
+
+	public List<ConfigDir> getConfigDirs() {
+		return configDirs;
+	}
+
+	public void setConfigDirs(List<ConfigDir> configDirs) {
+		this.configDirs = configDirs;
+	}
+
+	public Pattern getModuleFilenamesIncludePattern() {
+		return moduleFilenamesIncludePattern;
+	}
+
+	public void setModuleFilenamesIncludePattern(Pattern moduleFilenamesIncludePattern) {
+		this.moduleFilenamesIncludePattern = moduleFilenamesIncludePattern;
+	}
+
+	public boolean isSortOtherDatabaseByDependencies() {
+		return sortOtherDatabaseByDependencies;
+	}
+
+	public void setSortOtherDatabaseByDependencies(boolean sortOtherDatabaseByDependencies) {
+		this.sortOtherDatabaseByDependencies = sortOtherDatabaseByDependencies;
+	}
+
+	public Integer getModulesLoaderBatchSize() {
+		return modulesLoaderBatchSize;
+	}
+
+	public void setModulesLoaderBatchSize(Integer modulesLoaderBatchSize) {
+		this.modulesLoaderBatchSize = modulesLoaderBatchSize;
+	}
+
+	public boolean isIncrementalDeploy() {
+		return incrementalDeploy;
+	}
+
+	public void setIncrementalDeploy(boolean incrementalDeploy) {
+		this.incrementalDeploy = incrementalDeploy;
+	}
+
+	public String getModelsDatabase() {
+		return modelsDatabase;
+	}
+
+	public void setModelsDatabase(String modelsDatabase) {
+		this.modelsDatabase = modelsDatabase;
+	}
+
+	public String getCpfDatabaseName() {
+		return cpfDatabaseName != null ? cpfDatabaseName : getTriggersDatabaseName();
+	}
+
+	public void setCpfDatabaseName(String cpfDatabaseName) {
+		this.cpfDatabaseName = cpfDatabaseName;
+	}
+
+	public Map<String, Integer> getDatabaseNamesAndReplicaCounts() {
+		return databaseNamesAndReplicaCounts;
+	}
+
+	public void setDatabaseNamesAndReplicaCounts(Map<String, Integer> databaseNamesAndReplicaCounts) {
+		this.databaseNamesAndReplicaCounts = databaseNamesAndReplicaCounts;
+	}
+
+	public Map<String, ForestNamingStrategy> getForestNamingStrategies() {
+		return forestNamingStrategies;
+	}
+
+	public void setForestNamingStrategies(Map<String, ForestNamingStrategy> forestNamingStrategies) {
+		this.forestNamingStrategies = forestNamingStrategies;
+	}
+
+	public boolean isUpdateMimetypeWhenPropertiesAreEqual() {
+		return updateMimetypeWhenPropertiesAreEqual;
+	}
+
+	public void setUpdateMimetypeWhenPropertiesAreEqual(boolean updateMimetypeWhenPropertiesAreEqual) {
+		this.updateMimetypeWhenPropertiesAreEqual = updateMimetypeWhenPropertiesAreEqual;
+	}
+
+	public X509TrustManager getRestTrustManager() {
+		return restTrustManager;
+	}
+
+	public void setRestTrustManager(X509TrustManager restTrustManager) {
+		this.restTrustManager = restTrustManager;
+	}
+
+	public X509TrustManager getAppServicesTrustManager() {
+		return appServicesTrustManager;
+	}
+
+	public void setAppServicesTrustManager(X509TrustManager appServicesTrustManager) {
+		this.appServicesTrustManager = appServicesTrustManager;
+	}
+
+	public ReplicaBuilderStrategy getReplicaBuilderStrategy() {
+		return replicaBuilderStrategy;
+	}
+
+	public void setReplicaBuilderStrategy(ReplicaBuilderStrategy replicaBuilderStrategy) {
+		this.replicaBuilderStrategy = replicaBuilderStrategy;
+	}
+
+	public boolean isTdeValidationEnabled() {
+		return tdeValidationEnabled;
+	}
+
+	public void setTdeValidationEnabled(boolean tdeValidationEnabled) {
+		this.tdeValidationEnabled = tdeValidationEnabled;
+	}
+
+	public boolean isAddHostNameTokens() {
+		return addHostNameTokens;
+	}
+
+	public void setAddHostNameTokens(boolean addHostNameTokens) {
+		this.addHostNameTokens = addHostNameTokens;
+	}
+
+	public DataConfig getDataConfig() {
+		return dataConfig;
+	}
+
+	public void setDataConfig(DataConfig dataConfig) {
+		this.dataConfig = dataConfig;
+	}
+
+	public PluginConfig getPluginConfig() {
+		return pluginConfig;
+	}
+
+	public void setPluginConfig(PluginConfig pluginConfig) {
+		this.pluginConfig = pluginConfig;
+	}
+
+	public List<String> getSchemaPaths() {
+		return schemaPaths;
+	}
+
+	public void setSchemaPaths(List<String> schemaPaths) {
+		this.schemaPaths = schemaPaths;
+	}
+
+	public boolean isMergeResources() {
+		return mergeResources;
+	}
+
+	public void setMergeResources(boolean mergeResources) {
+		this.mergeResources = mergeResources;
+	}
+
+	public boolean isModuleTimestampsUseHost() {
+		return moduleTimestampsUseHost;
+	}
+
+	public void setModuleTimestampsUseHost(boolean moduleTimestampsUseHost) {
+		this.moduleTimestampsUseHost = moduleTimestampsUseHost;
+	}
+
+	public DatabaseClient.ConnectionType getRestConnectionType() {
+		return restConnectionType;
+	}
+
+	public void setRestConnectionType(DatabaseClient.ConnectionType restConnectionType) {
+		this.restConnectionType = restConnectionType;
+	}
+
+	public DatabaseClient.ConnectionType getAppServicesConnectionType() {
+		return appServicesConnectionType;
+	}
+
+	public void setAppServicesConnectionType(DatabaseClient.ConnectionType appServicesConnectionType) {
+		this.appServicesConnectionType = appServicesConnectionType;
+	}
+
+	public CmaConfig getCmaConfig() {
+		return cmaConfig;
+	}
+
+	public void setCmaConfig(CmaConfig cmaConfig) {
+		this.cmaConfig = cmaConfig;
+	}
+
+	public boolean isRestUseDefaultKeystore() {
+		return restUseDefaultKeystore;
+	}
+
+	public void setRestUseDefaultKeystore(boolean restUseDefaultKeystore) {
+		this.restUseDefaultKeystore = restUseDefaultKeystore;
+	}
+
+	public String getRestSslProtocol() {
+		return restSslProtocol;
+	}
+
+	public void setRestSslProtocol(String restSslProtocol) {
+		this.restSslProtocol = restSslProtocol;
+	}
+
+	public String getRestTrustManagementAlgorithm() {
+		return restTrustManagementAlgorithm;
+	}
+
+	public void setRestTrustManagementAlgorithm(String restTrustManagementAlgorithm) {
+		this.restTrustManagementAlgorithm = restTrustManagementAlgorithm;
+	}
+
+	public boolean isAppServicesUseDefaultKeystore() {
+		return appServicesUseDefaultKeystore;
+	}
+
+	public void setAppServicesUseDefaultKeystore(boolean appServicesUseDefaultKeystore) {
+		this.appServicesUseDefaultKeystore = appServicesUseDefaultKeystore;
+	}
+
+	public String getAppServicesSslProtocol() {
+		return appServicesSslProtocol;
+	}
+
+	public void setAppServicesSslProtocol(String appServicesSslProtocol) {
+		this.appServicesSslProtocol = appServicesSslProtocol;
+	}
+
+	public String getAppServicesTrustManagementAlgorithm() {
+		return appServicesTrustManagementAlgorithm;
+	}
+
+	public void setAppServicesTrustManagementAlgorithm(String appServicesTrustManagementAlgorithm) {
+		this.appServicesTrustManagementAlgorithm = appServicesTrustManagementAlgorithm;
 	}
 }

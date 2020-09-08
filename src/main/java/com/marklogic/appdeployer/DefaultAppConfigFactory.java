@@ -1,380 +1,542 @@
 package com.marklogic.appdeployer;
 
-import com.marklogic.client.DatabaseClientFactory;
+import com.marklogic.client.DatabaseClient;
 import com.marklogic.client.ext.SecurityContextType;
 import com.marklogic.mgmt.util.PropertySource;
 import com.marklogic.mgmt.util.PropertySourceFactory;
+import org.springframework.util.StringUtils;
 
 import java.io.File;
 import java.util.*;
+import java.util.function.BiConsumer;
 import java.util.regex.Pattern;
 
 public class DefaultAppConfigFactory extends PropertySourceFactory implements AppConfigFactory {
 
+	private File projectDir;
+
 	public DefaultAppConfigFactory() {
 		super();
+		initialize();
 	}
 
 	public DefaultAppConfigFactory(PropertySource propertySource) {
 		super(propertySource);
+		initialize();
 	}
+
+	private Map<String, BiConsumer<AppConfig, String>> propertyConsumerMap;
 
 	@Override
 	public AppConfig newAppConfig() {
-		AppConfig c = new AppConfig();
+		final AppConfig appConfig = new AppConfig(this.projectDir);
+		for (String propertyName : propertyConsumerMap.keySet()) {
+			String value = getProperty(propertyName);
+			if (value != null) {
+				try {
+					propertyConsumerMap.get(propertyName).accept(appConfig, value);
+				} catch (Exception ex) {
+					throw new IllegalArgumentException(
+						format("Unable to parse value '%s' for property '%s'; cause: %s", value, propertyName, ex.getMessage()), ex);
+				}
+			}
+		}
 
-		String prop = null;
+		return appConfig;
+	}
 
-		prop = getProperty("mlCatchDeployExceptions");
-		if (prop != null) {
+	/**
+	 * Registers all of the property handlers.
+	 */
+	public void initialize() {
+		// Order matters, so a LinkedHashMap is used to preserve the order
+		propertyConsumerMap = new LinkedHashMap<>();
+
+		propertyConsumerMap.put("mlCatchDeployExceptions", (config, prop) -> {
 			logger.info("Catch deploy exceptions: " + prop);
-			c.setCatchDeployExceptions(Boolean.parseBoolean(prop));
-		}
+			config.setCatchDeployExceptions(Boolean.parseBoolean(prop));
+		});
 
-		prop = getProperty("mlCatchUndeployExceptions");
-		if (prop != null) {
+		propertyConsumerMap.put("mlCatchUndeployExceptions", (config, prop) -> {
 			logger.info("Catch undeploy exceptions: " + prop);
-			c.setCatchUndeployExceptions(Boolean.parseBoolean(prop));
-		}
+			config.setCatchUndeployExceptions(Boolean.parseBoolean(prop));
+		});
 
-		/**
-		 * mlUsername and mlPassword are used as the default username/password for the admin, rest-admin, and manage-admin
-		 * roles when there isn't a specific username/password combo for those roles.
-		 */
-		String mlUsername = getProperty("mlUsername");
-		String mlPassword = getProperty("mlPassword");
+		propertyConsumerMap.put("mlMergeResources", (config, prop) -> {
+			logger.info("Merge resources before saving them: " + prop);
+			config.setMergeResources(Boolean.parseBoolean(prop));
+		});
+
+		final String cmaMessage = " with the Configuration Management API (CMA): ";
+
+		propertyConsumerMap.put("mlDeployWithCma", (config, prop) -> {
+			logger.info("Deploy all supported resources and combine requests" + cmaMessage + prop);
+			if (Boolean.parseBoolean(prop)) {
+				config.getCmaConfig().enableAll();
+			} else {
+				config.setCmaConfig(new CmaConfig());
+			}
+		});
+
+		propertyConsumerMap.put("mlOptimizeWithCma", (config, prop) -> {
+			logger.info("mlOptimizeWithCma is DEPRECATED; please use a property specific to the resource that you want to deploy with CMA");
+			// mlOptimizeWithCma was deprecated in 3.11; it was only used for deploying forests, so if the
+			// property is still used, the client in theory expects forests to still be deployed with CMA
+			config.getCmaConfig().setDeployForests(true);
+		});
+
+		propertyConsumerMap.put("mlCombineCmaRequests", (config, prop) -> {
+			logger.info("Combine requests" + cmaMessage + prop);
+			config.getCmaConfig().setCombineRequests(Boolean.parseBoolean(prop));
+		});
+
+		propertyConsumerMap.put("mlDeployAmpsWithCma", (config, prop) -> {
+			logger.info("Deploy amps" + cmaMessage + prop);
+			config.getCmaConfig().setDeployAmps(Boolean.parseBoolean(prop));
+		});
+
+		propertyConsumerMap.put("mlDeployDatabasesWithCma", (config, prop) -> {
+			logger.info("Deploy databases and forests" + cmaMessage + prop);
+			config.getCmaConfig().setDeployDatabases(Boolean.parseBoolean(prop));
+		});
+
+		propertyConsumerMap.put("mlDeployForestsWithCma", (config, prop) -> {
+			logger.info("Deploy forests" + cmaMessage + prop);
+			config.getCmaConfig().setDeployForests(Boolean.parseBoolean(prop));
+		});
+
+		propertyConsumerMap.put("mlDeployPrivilegesWithCma", (config, prop) -> {
+			logger.info("Deploy privileges" + cmaMessage + prop);
+			config.getCmaConfig().setDeployPrivileges(Boolean.parseBoolean(prop));
+		});
+
+		propertyConsumerMap.put("mlDeployProtectedPathsWithCma", (config, prop) -> {
+			logger.info("Deploy protected paths" + cmaMessage + prop);
+			config.getCmaConfig().setDeployProtectedPaths(Boolean.parseBoolean(prop));
+		});
+
+		propertyConsumerMap.put("mlDeployQueryRolesetsWithCma", (config, prop) -> {
+			logger.info("Deploy query rolesets" + cmaMessage + prop);
+			config.getCmaConfig().setDeployQueryRolesets(Boolean.parseBoolean(prop));
+		});
+
+		propertyConsumerMap.put("mlDeployRolesWithCma", (config, prop) -> {
+			logger.info("Deploy servers" + cmaMessage + prop);
+			config.getCmaConfig().setDeployRoles(Boolean.parseBoolean(prop));
+		});
+
+		propertyConsumerMap.put("mlDeployServersWithCma", (config, prop) -> {
+			logger.info("Deploy servers" + cmaMessage + prop);
+			config.getCmaConfig().setDeployServers(Boolean.parseBoolean(prop));
+		});
+
+		propertyConsumerMap.put("mlDeployUsersWithCma", (config, prop) -> {
+			logger.info("Deploy users" + cmaMessage + prop);
+			config.getCmaConfig().setDeployUsers(Boolean.parseBoolean(prop));
+		});
+
+		propertyConsumerMap.put("mlAddHostNameTokens", (config, prop) -> {
+			logger.info("Add host names to the custom tokens map: " + prop);
+			config.setAddHostNameTokens(Boolean.parseBoolean(prop));
+		});
 
 		/**
 		 * The application name is used as a prefix for default names for a variety of resources, such as REST API servers
 		 * and databases.
 		 */
-		prop = getProperty("mlAppName");
-		if (prop != null) {
+		propertyConsumerMap.put("mlAppName", (config, prop) -> {
 			logger.info("App name: " + prop);
-			c.setName(prop);
-		}
+			config.setName(prop);
+		});
 
 		/**
 		 * The path to the directory containing all the resource configuration files. Defaults to src/main/ml-config.
 		 * mlConfigPath is the preferred one, as its name is consistent with other properties that refer to a path.
 		 * mlConfigDir is deprecated but still supported.
+		 *
+		 * As of 3.3.0, mlConfigPaths is the preferred property, and mlConfigDir and mlConfigPath will be ignored if
+		 * it's set.
 		 */
-		prop = getProperty("mlConfigDir");
-		if (prop != null) {
+		propertyConsumerMap.put("mlConfigPaths", (config, prop) -> {
+			logger.info("Config paths: " + prop);
+			List<ConfigDir> list = new ArrayList<>();
+			for (String path : prop.split(",")) {
+				list.add(buildConfigDir(path));
+			}
+			config.setConfigDirs(list);
+		});
+
+		// TODO Only process if mlConfigPaths not set?
+		propertyConsumerMap.put("mlConfigDir", (config, prop) -> {
 			logger.info("mlConfigDir is deprecated; please use mlConfigPath; Config dir: " + prop);
-			c.setConfigDir(new ConfigDir(new File(prop)));
-		}
-		prop = getProperty("mlConfigPath");
-		if (prop != null) {
+			config.setConfigDir(buildConfigDir(prop));
+		});
+		propertyConsumerMap.put("mlConfigPath", (config, prop) -> {
 			logger.info("Config path: " + prop);
-			c.setConfigDir(new ConfigDir(new File(prop)));
-		}
-
-		/**
-		 * Defines the path to files that should be loaded into a schemas database. Defaults to src/main/ml-schemas.
-		 */
-		prop = getProperty("mlSchemasPath");
-		if (prop != null) {
-			logger.info("Schemas path: " + prop);
-			c.setSchemasPath(prop);
-		}
-
-		prop = getProperty("mlSchemasDatabaseName");
-		if (prop != null) {
-			logger.info("Schemas database name: " + prop);
-			c.setSchemasDatabaseName(prop);
-		}
-
-		prop = getProperty("mlTriggersDatabaseName");
-		if (prop != null) {
-			logger.info("Triggers database name: " + prop);
-			c.setTriggersDatabaseName(prop);
-		}
+			config.setConfigDir(buildConfigDir(prop));
+		});
 
 		/**
 		 * Defines the MarkLogic host that requests should be sent to. Defaults to localhost.
 		 */
-		prop = getProperty("mlHost");
-		if (prop != null) {
+		propertyConsumerMap.put("mlHost", (config, prop) -> {
 			logger.info("App host: " + prop);
-			c.setHost(prop);
-		}
-
-		/**
-		 * Set this to true to prevent creating a REST API server by default.
-		 */
-		prop = getProperty("mlNoRestServer");
-		if (prop != null && Boolean.parseBoolean(prop) == true) {
-			logger.info("Not creating REST server if no REST config file is found");
-			c.setNoRestServer(true);
-
-		}
-		/**
-		 * If a REST API server is created, it will use the following port. Modules will also be loaded via this port.
-		 */
-		prop = getProperty("mlRestPort");
-		if (prop != null) {
-			logger.info("App REST port: " + prop);
-			c.setRestPort(Integer.parseInt(prop));
-		}
-
-		prop = getProperty("mlRestAuthentication");
-		if (prop != null) {
-			logger.info("App REST authentication: " + prop);
-			c.setRestAuthentication(DatabaseClientFactory.Authentication.valueOfUncased(prop));
-			c.setRestSecurityContextType(SecurityContextType.valueOf(prop.toUpperCase()));
-		}
-
-		/**
-		 * If a test REST API server is created, it will use the following port.
-		 */
-		prop = getProperty("mlTestRestPort");
-		if (prop != null) {
-			logger.info("App test REST port: " + prop);
-			c.setTestRestPort(Integer.parseInt(prop));
-		}
+			config.setHost(prop);
+		});
 
 		/**
 		 * Defaults to port 8000. In rare cases, the ML App-Services app server will have been changed to listen on a
 		 * different port, in which case you can set this to that port.
 		 */
-		prop = getProperty("mlAppServicesPort");
-		if (prop != null) {
+		propertyConsumerMap.put("mlAppServicesPort", (config, prop) -> {
 			logger.info("App services port: " + prop);
-			c.setAppServicesPort(Integer.parseInt(prop));
-		}
+			config.setAppServicesPort(Integer.parseInt(prop));
+		});
+		/**
+		 * The username and password for a ML user with the rest-admin role that is used for e.g. loading
+		 * non-REST API modules via the App Services client REST API, which is defined by the appServicesPort.
+		 */
+		propertyConsumerMap.put("mlAppServicesUsername", (config, prop) -> {
+			logger.info("App Services username: " + prop);
+			config.setAppServicesUsername(prop);
+		});
+		propertyConsumerMap.put("mlAppServicesPassword", (config, prop) -> {
+			config.setAppServicesPassword(prop);
+		});
+		propertyConsumerMap.put("mlAppServicesAuthentication", (config, prop) -> {
+			logger.info("App Services authentication: " + prop);
+			config.setAppServicesSecurityContextType(SecurityContextType.valueOf(prop.toUpperCase()));
+		});
+		propertyConsumerMap.put("mlAppServicesCertFile", (config, prop) -> {
+			logger.info("App Services cert file: " + prop);
+			config.setAppServicesCertFile(prop);
+		});
+		propertyConsumerMap.put("mlAppServicesCertPassword", (config, prop) -> {
+			config.setAppServicesCertPassword(prop);
+		});
+		propertyConsumerMap.put("mlAppServicesConnectionType", (config, prop) -> {
+			logger.info("App Services connection type: " + prop);
+			config.setAppServicesConnectionType(DatabaseClient.ConnectionType.valueOf(prop));
+		});
+		propertyConsumerMap.put("mlAppServicesExternalName", (config, prop) -> {
+			logger.info("App Services external name: " + prop);
+			config.setAppServicesExternalName(prop);
+		});
 
+		propertyConsumerMap.put("mlAppServicesSimpleSsl", (config, prop) -> {
+			if (StringUtils.hasText(prop) && !"false".equalsIgnoreCase(prop)) {
+				if ("true".equalsIgnoreCase(prop)) {
+					config.setAppServicesSimpleSslConfig();
+				} else {
+					config.setAppServicesSimpleSslConfig(prop);
+				}
+				String protocol = config.getAppServicesSslContext().getProtocol();
+				logger.info(format("Using protocol '%s' and 'ANY' hostname verifier for authenticating against the " +
+					"App-Services server", protocol));
+			}
+		});
+
+		propertyConsumerMap.put("mlAppServicesSslProtocol", (config, prop) -> {
+			logger.info("Using SSL protocol for App-Services server: " + prop);
+			config.setAppServicesSslProtocol(prop);
+		});
+
+		propertyConsumerMap.put("mlAppServicesUseDefaultKeystore", (config, prop) -> {
+			logger.info("Using default JVM keystore for SSL for App-Services server: " + prop);
+			config.setAppServicesUseDefaultKeystore(Boolean.parseBoolean(prop));
+		});
+
+		propertyConsumerMap.put("mlAppServicesTrustManagementAlgorithm", (config, prop) -> {
+			logger.info("Using trust management algorithm for SSL for App-Services server: " + prop);
+			config.setAppServicesTrustManagementAlgorithm(prop);
+		});
+
+		/**
+		 * Set this to true to prevent creating a REST API server by default.
+		 */
+		propertyConsumerMap.put("mlNoRestServer", (config, prop) -> {
+			logger.info("Not creating REST server if no REST config file is found");
+			config.setNoRestServer(true);
+		});
+
+		/**
+		 * If a REST API server is created, it will use the following port. Modules will also be loaded via this port.
+		 */
+		propertyConsumerMap.put("mlRestPort", (config, prop) -> {
+			logger.info("App REST port: " + prop);
+			config.setRestPort(Integer.parseInt(prop));
+		});
 		/**
 		 * The username and password for a ML user with the rest-admin role. This user is used for operations against the
 		 * Client REST API - namely, loading REST API modules such as options, services, and transforms.
 		 */
-		prop = getProperty("mlRestAdminUsername");
-		if (prop != null) {
+		propertyConsumerMap.put("mlRestAdminUsername", (config, prop) -> {
 			logger.info("REST admin username: " + prop);
-			c.setRestAdminUsername(prop);
-		} else if (mlUsername != null) {
-			logger.info("REST admin username: " + mlUsername);
-			c.setRestAdminUsername(mlUsername);
-		}
-		prop = getProperty("mlRestAdminPassword");
-		if (prop != null) {
-			c.setRestAdminPassword(prop);
-		} else if (mlPassword != null) {
-			c.setRestAdminPassword(mlPassword);
-		}
-
-		prop = getProperty("mlRestCertFile");
-		if (prop != null) {
+			config.setRestAdminUsername(prop);
+			if (!propertyExists("mlAppServicesUsername")) {
+				logger.info("App Services username: " + prop);
+				config.setAppServicesUsername(prop);
+			}
+		});
+		propertyConsumerMap.put("mlRestAdminPassword", (config, prop) -> {
+			config.setRestAdminPassword(prop);
+			if (!propertyExists("mlAppServicesPassword")) {
+				config.setAppServicesPassword(prop);
+			}
+		});
+		propertyConsumerMap.put("mlRestConnectionType", (config, prop) -> {
+			logger.info("REST connection type: " + prop);
+			config.setRestConnectionType(DatabaseClient.ConnectionType.valueOf(prop));
+		});
+		propertyConsumerMap.put("mlRestAuthentication", (config, prop) -> {
+			logger.info("App REST authentication: " + prop);
+			config.setRestSecurityContextType(SecurityContextType.valueOf(prop.toUpperCase()));
+		});
+		propertyConsumerMap.put("mlRestCertFile", (config, prop) -> {
 			logger.info("REST cert file: " + prop);
-			c.setRestCertFile(prop);
-		}
-
-		prop = getProperty("mlRestCertPassword");
-		if (prop != null) {
+			config.setRestCertFile(prop);
+		});
+		propertyConsumerMap.put("mlRestCertPassword", (config, prop) -> {
 			logger.info("REST cert password: " + prop);
-			c.setRestCertPassword(prop);
-		}
-
-		prop = getProperty("mlRestExternalName");
-		if (prop != null) {
+			config.setRestCertPassword(prop);
+		});
+		propertyConsumerMap.put("mlRestExternalName", (config, prop) -> {
 			logger.info("REST external name: " + prop);
-			c.setRestExternalName(prop);
-		}
+			config.setRestExternalName(prop);
+		});
 
 		/**
-		 * The username and password for a ML user with the rest-admin role that is used for e.g. loading
-		 * non-REST API modules via the App Services client REST API, which is defined by the appServicesPort.
-		 *
-		 * Note that this will first default to restAdminUsername and restAdminPassword if those have been set, and if
-		 * not, then username and password.
+		 * When modules are loaded via the Client REST API, if the app server requires an SSL connection, then
+		 * setting this property will force the simplest SSL connection to be created.
 		 */
-		prop = getProperty("mlAppServicesUsername");
-		if (prop != null) {
-			logger.info("App Services username: " + prop);
-			c.setAppServicesUsername(prop);
-		} else if (c.getRestAdminUsername() != null) {
-			logger.info("App Services username: " + c.getRestAdminUsername());
-			c.setAppServicesUsername(c.getRestAdminUsername());
-		} else if (mlUsername != null) {
-			logger.info("App Services username: " + mlUsername);
-			c.setAppServicesUsername(mlUsername);
-		}
-		prop = getProperty("mlAppServicesPassword");
-		if (prop != null) {
-			c.setAppServicesPassword(prop);
-		} else if (c.getRestAdminPassword() != null) {
-			c.setAppServicesPassword(c.getRestAdminPassword());
-		} else if (mlPassword != null) {
-			c.setAppServicesPassword(mlPassword);
-		}
+		propertyConsumerMap.put("mlSimpleSsl", (config, prop) -> {
+			if (StringUtils.hasText(prop) && !"false".equalsIgnoreCase(prop)) {
+				if ("true".equalsIgnoreCase(prop)) {
+					config.setSimpleSslConfig();
+				} else {
+					config.setSimpleSslConfig(prop);
+				}
+				String protocol = config.getRestSslContext().getProtocol();
+				logger.info(format("Using protocol '%s' and 'ANY' hostname verifier for authenticating against the " +
+					"client REST API server", protocol));
+			}
+		});
 
-		prop = getProperty("mlAppServicesAuthentication");
-		if (prop != null) {
-			logger.info("App Services authentication: " + prop);
-			c.setAppServicesSecurityContextType(SecurityContextType.valueOf(prop.toUpperCase()));
-			c.setAppServicesAuthentication(DatabaseClientFactory.Authentication.valueOfUncased(prop));
-		}
+		propertyConsumerMap.put("mlRestSslProtocol", (config, prop) -> {
+			logger.info("Using SSL protocol for client REST API server: " + prop);
+			config.setRestSslProtocol(prop);
+		});
 
-		prop = getProperty("mlAppServicesCertFile");
-		if (prop != null) {
-			logger.info("App Services cert file: " + prop);
-			c.setAppServicesCertFile(prop);
-		}
+		propertyConsumerMap.put("mlRestUseDefaultKeystore", (config, prop) -> {
+			logger.info("Using default JVM keystore for SSL for client REST API server: " + prop);
+			config.setRestUseDefaultKeystore(Boolean.parseBoolean(prop));
+		});
 
-		prop = getProperty("mlAppServicesCertPassword");
-		if (prop != null) {
-			logger.info("App Services cert password: " + prop);
-			c.setAppServicesCertPassword(prop);
-		}
+		propertyConsumerMap.put("mlRestTrustManagementAlgorithm", (config, prop) -> {
+			logger.info("Using trust management algorithm for SSL for client REST API server: " + prop);
+			config.setRestTrustManagementAlgorithm(prop);
+		});
 
-		prop = getProperty("mlAppServicesExternalName");
-		if (prop != null) {
-			logger.info("App Services external name: " + prop);
-			c.setAppServicesExternalName(prop);
-		}
-
-		if ("true".equals(getProperty("mlAppServicesSimpleSsl"))) {
-			logger.info("Using simple SSL context and 'ANY' hostname verifier for authenticating against the App-Services server");
-			c.setAppServicesSimpleSslConfig();
-		}
 
 		/**
-		 * When a content database is created, this property can be used to control the number of forests per host for
-		 * that database.
+		 * mlUsername and mlPassword are the default username/password for connecting to the app's REST server (if one
+		 * exists) and to App-Services on 8000. These are processed before the other username/password properties so that
+		 * the other ones will override what these set.
 		 */
-		prop = getProperty("mlContentForestsPerHost");
-		if (prop != null) {
+		propertyConsumerMap.put("mlUsername", (config, prop) -> {
+			if (!propertyExists("mlRestAdminUsername")) {
+				logger.info("REST admin username: " + prop);
+				config.setRestAdminUsername(prop);
+			}
+			if (!propertyExists("mlAppServicesUsername")) {
+				logger.info("App Services username: " + prop);
+				config.setAppServicesUsername(prop);
+			}
+		});
+
+		propertyConsumerMap.put("mlPassword", (config, prop) -> {
+			if (!propertyExists("mlRestAdminPassword")) {
+				config.setRestAdminPassword(prop);
+			}
+			if (!propertyExists("mlAppServicesPassword")) {
+				config.setAppServicesPassword(prop);
+			}
+		});
+
+
+		propertyConsumerMap.put("mlRestServerName", (config, prop) -> {
+			logger.info("REST server name: " + prop);
+			config.setRestServerName(prop);
+		});
+
+		/**
+		 * If a test REST API server is created, it will use the following port.
+		 */
+		propertyConsumerMap.put("mlTestRestPort", (config, prop) -> {
+			logger.info("App test REST port: " + prop);
+			config.setTestRestPort(Integer.parseInt(prop));
+		});
+
+		propertyConsumerMap.put("mlTestRestServerName", (config, prop) -> {
+			logger.info("Test REST server name: " + prop);
+			config.setTestRestServerName(prop);
+		});
+
+		propertyConsumerMap.put("mlTestContentDatabaseName", (config, prop) -> {
+			logger.info("Test content database name: " + prop);
+			config.setTestContentDatabaseName(prop);
+		});
+
+		// Deprecated - use mlSchemaPaths instead
+		propertyConsumerMap.put("mlSchemasPath", (config, prop) -> {
+			logger.info("mlSchemasPath is deprecated as of version 3.13.0; please use mlSchemaPaths instead; schemas path: " + prop);
+			config.setSchemaPaths(buildPathListFromCommaDelimitedString(prop));
+		});
+
+		propertyConsumerMap.put("mlSchemaPaths", (config, prop) -> {
+			logger.info("Schema paths: " + prop);
+			config.setSchemaPaths(buildPathListFromCommaDelimitedString(prop));
+		});
+
+		propertyConsumerMap.put("mlTdeValidationEnabled", (config, prop) -> {
+			logger.info("TDE validation enabled: " + prop);
+			config.setTdeValidationEnabled(Boolean.parseBoolean(prop));
+		});
+
+		propertyConsumerMap.put("mlSchemasDatabaseName", (config, prop) -> {
+			logger.info("Schemas database name: " + prop);
+			config.setSchemasDatabaseName(prop);
+		});
+
+		propertyConsumerMap.put("mlTriggersDatabaseName", (config, prop) -> {
+			logger.info("Triggers database name: " + prop);
+			config.setTriggersDatabaseName(prop);
+		});
+
+		propertyConsumerMap.put("mlCpfDatabaseName", (config, prop) -> {
+			logger.info("CPF database name: " + prop);
+			config.setCpfDatabaseName(prop);
+		});
+
+		propertyConsumerMap.put("mlContentForestsPerHost", (config, prop) -> {
 			logger.info("Content forests per host: " + prop);
-			c.setContentForestsPerHost(Integer.parseInt(prop));
-		}
+			config.setContentForestsPerHost(Integer.parseInt(prop));
+		});
 
-		prop = getProperty("mlCreateForests");
-		if (prop != null) {
+		propertyConsumerMap.put("mlCreateForests", (config, prop) -> {
 			logger.info("Create forests for each deployed database: " + prop);
-			c.setCreateForests(Boolean.parseBoolean(prop));
-		}
+			config.setCreateForests(Boolean.parseBoolean(prop));
+		});
 
 		/**
 		 * For any database besides the content database, configure the number of forests per host.
 		 */
-		prop = getProperty("mlForestsPerHost");
-		if (prop != null) {
+		propertyConsumerMap.put("mlForestsPerHost", (config, prop) -> {
 			logger.info("Forests per host: " + prop);
 			String[] tokens = prop.split(",");
 			for (int i = 0; i < tokens.length; i += 2) {
-				c.getForestCounts().put(tokens[i], Integer.parseInt(tokens[i + 1]));
+				config.getForestCounts().put(tokens[i], Integer.parseInt(tokens[i + 1]));
 			}
-		}
+		});
 
 		/**
 		 * This property can specify a comma-delimited list of database names and replica counts as a simple way of
 		 * setting up forest replicas - e.g. Documents,1,Security,2.
 		 */
-		prop = getProperty("mlDatabaseNamesAndReplicaCounts");
-		if (prop != null) {
+		propertyConsumerMap.put("mlDatabaseNamesAndReplicaCounts", (config, prop) -> {
 			logger.info("Database names and replica counts: " + prop);
-			c.setDatabaseNamesAndReplicaCounts(prop);
-		}
+			String[] tokens = prop.split(",");
+			Map<String, Integer> map = new HashMap<>();
+			for (int i = 0; i < tokens.length; i += 2) {
+				map.put(tokens[i], Integer.parseInt(tokens[i + 1]));
+			}
+			config.setDatabaseNamesAndReplicaCounts(map);
+		});
 
-		prop = getProperty("mlDatabasesWithForestsOnOneHost");
-		if (prop != null) {
+		propertyConsumerMap.put("mlDatabasesWithForestsOnOneHost", (config, prop) -> {
 			logger.info("Databases that will have their forest(s) created on a single host: " + prop);
 			String[] names = prop.split(",");
 			Set<String> set = new HashSet<>();
 			for (String name : names) {
 				set.add(name);
 			}
-			c.setDatabasesWithForestsOnOneHost(set);
-		}
+			config.setDatabasesWithForestsOnOneHost(set);
+		});
 
-		prop = getProperty("mlDatabaseHosts");
-		if (prop != null) {
+		propertyConsumerMap.put("mlDatabaseGroups", (config, prop) -> {
+			logger.info("Databases and the groups containing the hosts that their forests will be created on: " + prop);
+			config.setDatabaseGroups(buildMapOfListsFromDelimitedString(prop));
+		});
+
+		propertyConsumerMap.put("mlHostGroups", (config, prop) -> {
+			logger.info("Hosts will be assigned to groups: " + prop);
+			config.setHostGroups(buildMapFromCommaDelimitedString(prop));
+		});
+
+		propertyConsumerMap.put("mlDatabaseHosts", (config, prop) -> {
 			logger.info("Databases and the hosts that their forests will be created on: " + prop);
-			String[] tokens = prop.split(",");
-			Map<String, Set<String>> map = new HashMap<>();
-			for (int i = 0; i < tokens.length; i += 2) {
-				String dbName = tokens[i];
-				String[] hostNames = tokens[i + 1].split("\\|");
-				Set<String> names = new HashSet<>();
-				for (String name : hostNames) {
-					names.add(name);
-				}
-				map.put(dbName, names);
-			}
-			c.setDatabaseHosts(map);
-		}
+			config.setDatabaseHosts(buildMapOfListsFromDelimitedString(prop));
+		});
 
-		prop = getProperty("mlForestDataDirectory");
-		if (prop != null) {
+		propertyConsumerMap.put("mlForestDataDirectory", (config, prop) -> {
 			logger.info("Default forest data directory for all databases: " + prop);
-			c.setForestDataDirectory(prop);
-		}
+			config.setForestDataDirectory(prop);
+		});
 
-		prop = getProperty("mlForestFastDataDirectory");
-		if (prop != null) {
+		propertyConsumerMap.put("mlForestFastDataDirectory", (config, prop) -> {
 			logger.info("Default forest fast data directory for all databases: " + prop);
-			c.setForestFastDataDirectory(prop);
-		}
+			config.setForestFastDataDirectory(prop);
+		});
 
-		prop = getProperty("mlForestLargeDataDirectory");
-		if (prop != null) {
+		propertyConsumerMap.put("mlForestLargeDataDirectory", (config, prop) -> {
 			logger.info("Default forest large data directory for all databases: " + prop);
-			c.setForestLargeDataDirectory(prop);
-		}
+			config.setForestLargeDataDirectory(prop);
+		});
 
-		prop = getProperty("mlReplicaForestDataDirectory");
-		if (prop != null) {
+		propertyConsumerMap.put("mlReplicaForestDataDirectory", (config, prop) -> {
 			logger.info("Default replica forest data directory for all databases: " + prop);
-			c.setReplicaForestDataDirectory(prop);
-		}
+			config.setReplicaForestDataDirectory(prop);
+		});
 
-		prop = getProperty("mlReplicaForestLargeDataDirectory");
-		if (prop != null) {
+		propertyConsumerMap.put("mlReplicaForestLargeDataDirectory", (config, prop) -> {
 			logger.info("Default replica forest large data directory for all databases: " + prop);
-			c.setReplicaForestLargeDataDirectory(prop);
-		}
+			config.setReplicaForestLargeDataDirectory(prop);
+		});
 
-		prop = getProperty("mlReplicaForestFastDataDirectory");
-		if (prop != null) {
+		propertyConsumerMap.put("mlReplicaForestFastDataDirectory", (config, prop) -> {
 			logger.info("Default replica forest fast data directory for all databases: " + prop);
-			c.setReplicaForestFastDataDirectory(prop);
-		}
+			config.setReplicaForestFastDataDirectory(prop);
+		});
 
-		prop = getProperty("mlDatabaseDataDirectories");
-		if (prop != null) {
+		propertyConsumerMap.put("mlDatabaseDataDirectories", (config, prop) -> {
 			logger.info("Databases and forest data directories: " + prop);
-			c.setDatabaseDataDirectories(buildMapFromCommaDelimitedString(prop));
-		}
+			config.setDatabaseDataDirectories(buildMapOfListsFromDelimitedString(prop));
+		});
 
-		prop = getProperty("mlDatabaseFastDataDirectories");
-		if (prop != null) {
+		propertyConsumerMap.put("mlDatabaseFastDataDirectories", (config, prop) -> {
 			logger.info("Databases and forest fast data directories: " + prop);
-			c.setDatabaseFastDataDirectories(buildMapFromCommaDelimitedString(prop));
-		}
+			config.setDatabaseFastDataDirectories(buildMapFromCommaDelimitedString(prop));
+		});
 
-		prop = getProperty("mlDatabaseLargeDataDirectories");
-		if (prop != null) {
+		propertyConsumerMap.put("mlDatabaseLargeDataDirectories", (config, prop) -> {
 			logger.info("Databases and forest large data directories: " + prop);
-			c.setDatabaseLargeDataDirectories(buildMapFromCommaDelimitedString(prop));
-		}
+			config.setDatabaseLargeDataDirectories(buildMapFromCommaDelimitedString(prop));
+		});
 
-		prop = getProperty("mlDatabaseReplicaDataDirectories");
-		if (prop != null) {
+		propertyConsumerMap.put("mlDatabaseReplicaDataDirectories", (config, prop) -> {
 			logger.info("Databases and replica forest data directories: " + prop);
-			c.setDatabaseReplicaDataDirectories(buildMapFromCommaDelimitedString(prop));
-		}
+			config.setDatabaseReplicaDataDirectories(buildMapOfListsFromDelimitedString(prop));
+		});
 
-		prop = getProperty("mlDatabaseReplicaFastDataDirectories");
-		if (prop != null) {
+		propertyConsumerMap.put("mlDatabaseReplicaFastDataDirectories", (config, prop) -> {
 			logger.info("Databases and replica forest fast data directories: " + prop);
-			c.setDatabaseReplicaFastDataDirectories(buildMapFromCommaDelimitedString(prop));
-		}
+			config.setDatabaseReplicaFastDataDirectories(buildMapFromCommaDelimitedString(prop));
+		});
 
-		prop = getProperty("mlDatabaseReplicaLargeDataDirectories");
-		if (prop != null) {
+		propertyConsumerMap.put("mlDatabaseReplicaLargeDataDirectories", (config, prop) -> {
 			logger.info("Databases and replica forest large data directories: " + prop);
-			c.setDatabaseReplicaLargeDataDirectories(buildMapFromCommaDelimitedString(prop));
-		}
+			config.setDatabaseReplicaLargeDataDirectories(buildMapFromCommaDelimitedString(prop));
+		});
 
 		/**
 		 * When undo is invoked on DeployDatabaseCommand (such as via mlUndeploy in ml-gradle), this controls whether
@@ -382,218 +544,209 @@ public class DefaultAppConfigFactory extends PropertySourceFactory implements Ap
 		 * has no impact - currently, the forests and their replicas will be deleted for efficiency reasons (results in
 		 * fewer calls to the Management REST API.
 		 */
-		prop = getProperty("mlDeleteForests");
-		if (prop != null) {
+		propertyConsumerMap.put("mlDeleteForests", (config, prop) -> {
 			logger.info("Delete forests when a database is deleted: " + prop);
-			c.setDeleteForests(Boolean.parseBoolean(prop));
-		}
+			config.setDeleteForests(Boolean.parseBoolean(prop));
+		});
 
 		/**
 		 * When undo is invoked on DeployDatabaseCommand (such as via mlUndeploy in ml-gradle), this controls whether
 		 * primary forests and their replicas are deleted first. Most of the time, you want this set to true
 		 * (the default) as otherwise, the database can't be deleted and the Management REST API will throw an error.
 		 */
-		prop = getProperty("mlDeleteReplicas");
-		if (prop != null) {
+		propertyConsumerMap.put("mlDeleteReplicas", (config, prop) -> {
 			logger.info("Delete replicas when a database is deleted: " + prop);
-			c.setDeleteReplicas(Boolean.parseBoolean(prop));
-		}
+			config.setDeleteReplicas(Boolean.parseBoolean(prop));
+		});
 
 		/**
 		 * When a REST API server is created, the content database name will default to mlAppName-content. This property
 		 * can be used to override that name.
 		 */
-		prop = getProperty("mlContentDatabaseName");
-		if (prop != null) {
+		propertyConsumerMap.put("mlContentDatabaseName", (config, prop) -> {
 			logger.info("Content database name: " + prop);
-			c.setContentDatabaseName(prop);
-		}
+			config.setContentDatabaseName(prop);
+		});
 
 		/**
 		 * When a REST API server is created, the modules database name will default to mlAppName-modules. This property
 		 * can be used to override that name.
 		 */
-		prop = getProperty("mlModulesDatabaseName");
-		if (prop != null) {
+		propertyConsumerMap.put("mlModulesDatabaseName", (config, prop) -> {
 			logger.info("Modules database name: " + prop);
-			c.setModulesDatabaseName(prop);
-		}
-
-		/**
-		 * When modules are loaded via the Client REST API, if the app server requires an SSL connection, then
-		 * setting this property will force the simplest SSL connection to be created.
-		 */
-		if ("true".equals(getProperty("mlSimpleSsl"))) {
-			logger.info(
-				"Using simple SSL context and 'ANY' hostname verifier for authenticating against client REST API server");
-			c.setSimpleSslConfig();
-		}
+			config.setModulesDatabaseName(prop);
+		});
 
 		/**
 		 * Specifies the path for flexrep configuration files; used by DeployFlexrepCommand.
 		 */
-		prop = getProperty("mlFlexrepPath");
-		if (prop != null) {
+		propertyConsumerMap.put("mlFlexrepPath", (config, prop) -> {
 			logger.info("Flexrep path: " + prop);
-			c.setFlexrepPath(prop);
-		}
+			config.setFlexrepPath(prop);
+		});
 
 		/**
 		 * "Default" is the assumed group for group-specific resources, such as app servers and scheduled tasks. This
 		 * property can be set to override that.
 		 */
-		prop = getProperty("mlGroupName");
-		if (prop != null) {
+		propertyConsumerMap.put("mlGroupName", (config, prop) -> {
 			logger.info("Group name: " + prop);
-			c.setGroupName(prop);
-		}
+			config.setGroupName(prop);
+		});
 
 		/**
 		 * When modules are loaded via the Client REST API, this property can specify a comma-delimited set of role/capability
 		 * permissions - e.g. rest-reader,read,rest-writer,update.
 		 */
-		prop = getProperty("mlModulePermissions");
-		if (prop != null) {
+		propertyConsumerMap.put("mlModulePermissions", (config, prop) -> {
 			logger.info("Module permissions: " + prop);
-			c.setModulePermissions(prop);
-		}
+			config.setModulePermissions(prop);
+		});
 
 		/**
 		 * When modules are loaded via the Client REST API, this property can specify a comma-delimited set of extensions
 		 * for files that should be loaded as binaries.
 		 */
-		prop = getProperty("mlAdditionalBinaryExtensions");
-		if (prop != null) {
+		propertyConsumerMap.put("mlAdditionalBinaryExtensions", (config, prop) -> {
 			String[] values = prop.split(",");
 			logger.info("Additional binary extensions for loading modules: " + Arrays.asList(values));
-			c.setAdditionalBinaryExtensions(values);
-		}
+			config.setAdditionalBinaryExtensions(values);
+		});
 
 		/**
 		 * By default, tokens in module files will be replaced. This property can be used to enable/disable that behavior.
 		 */
-		prop = getProperty("mlReplaceTokensInModules");
-		if (prop != null) {
+		propertyConsumerMap.put("mlReplaceTokensInModules", (config, prop) -> {
 			logger.info("Replace tokens in modules: " + prop);
-			c.setReplaceTokensInModules(Boolean.parseBoolean(prop));
-		}
+			config.setReplaceTokensInModules(Boolean.parseBoolean(prop));
+		});
 
 		/**
 		 * To mimic Roxy behavior, tokens in modules are expected to start with "@ml.". If you do not want this behavior,
 		 * you can set this property to false to disable it.
 		 */
-		prop = getProperty("mlUseRoxyTokenPrefix");
-		if (prop != null) {
+		propertyConsumerMap.put("mlUseRoxyTokenPrefix", (config, prop) -> {
 			logger.info("Use Roxy token prefix of '@ml.': " + prop);
-			c.setUseRoxyTokenPrefix(Boolean.parseBoolean(prop));
-		}
+			config.setUseRoxyTokenPrefix(Boolean.parseBoolean(prop));
+		});
 
 		/**
 		 * Comma-separated list of paths for loading modules. Defaults to src/main/ml-modules.
 		 */
-		prop = getProperty("mlModulePaths");
-		if (prop != null) {
+		propertyConsumerMap.put("mlModulePaths", (config, prop) -> {
 			logger.info("Module paths: " + prop);
-			String[] paths = prop.split(",");
-			// Ensure we have a modifiable list
-			List<String> list = new ArrayList<>();
-			for (String s : paths) {
-				list.add(s);
-			}
-			c.setModulePaths(list);
-		}
+			config.setModulePaths(buildPathListFromCommaDelimitedString(prop));
+		});
 
-		prop = getProperty("mlModuleTimestampsPath");
-		if (prop != null) {
-			logger.info("Module timestamps path: " + prop);
-			c.setModuleTimestampsPath(prop);
-		}
+		propertyConsumerMap.put("mlModuleTimestampsPath", (config, prop) -> {
+			if (prop.trim().length() == 0) {
+				logger.info("Disabling use of module timestamps file");
+				config.setModuleTimestampsPath(null);
+			} else {
+				logger.info("Module timestamps path: " + prop);
+				config.setModuleTimestampsPath(prop);
+			}
+		});
+
+		propertyConsumerMap.put("mlModuleTimestampsUseHost", (config, prop) -> {
+			logger.info("Use host in module timestamps file: " + prop);
+			config.setModuleTimestampsUseHost(Boolean.parseBoolean(prop));
+		});
+
+		propertyConsumerMap.put("mlModulesRegex", (config, prop) -> {
+			logger.info("Including module filenames matching regex: " + prop);
+			config.setModuleFilenamesIncludePattern(Pattern.compile(prop));
+		});
 
 		/**
 		 * Whether or not to load asset modules in bulk - i.e. in one transaction. Defaults to true.
 		 */
-		prop = getProperty("mlBulkLoadAssets");
-		if (prop != null) {
+		propertyConsumerMap.put("mlBulkLoadAssets", (config, prop) -> {
 			logger.info("Bulk load modules: " + prop);
-			c.setBulkLoadAssets(Boolean.parseBoolean(prop));
-		}
+			config.setBulkLoadAssets(Boolean.parseBoolean(prop));
+		});
 
 		/**
 		 * Whether or not to statically check asset modules after they're loaded - defaults to false.
 		 */
-		prop = getProperty("mlStaticCheckAssets");
-		if (prop != null) {
+		propertyConsumerMap.put("mlStaticCheckAssets", (config, prop) -> {
 			logger.info("Statically check asset modules: " + prop);
-			c.setStaticCheckAssets(Boolean.parseBoolean(prop));
-		}
+			config.setStaticCheckAssets(Boolean.parseBoolean(prop));
+		});
 
 		/**
 		 * Whether or not to attempt to statically check asset library modules after they're loaded - defaults to false.
 		 * If mlStaticCheckAssets is true and this is false, and no errors will be thrown for library modules.
 		 * See XccAssetLoader in ml-javaclient-util for information on how this tries to check a library module.
 		 */
-		prop = getProperty("mlStaticCheckLibraryAssets");
-		if (prop != null) {
+		propertyConsumerMap.put("mlStaticCheckLibraryAssets", (config, prop) -> {
 			logger.info("Statically check asset library modules: " + prop);
-			c.setStaticCheckLibraryAssets(Boolean.parseBoolean(prop));
-		}
+			config.setStaticCheckLibraryAssets(Boolean.parseBoolean(prop));
+		});
 
-		prop = getProperty("mlDeleteTestModules");
-		if (prop != null) {
+		propertyConsumerMap.put("mlDeleteTestModules", (config, prop) -> {
 			logger.info("Delete test modules: " + prop);
-			c.setDeleteTestModules(Boolean.parseBoolean(prop));
-		}
+			config.setDeleteTestModules(Boolean.parseBoolean(prop));
+		});
 
-		prop = getProperty("mlDeleteTestModulesPattern");
-		if (prop != null) {
+		propertyConsumerMap.put("mlDeleteTestModulesPattern", (config, prop) -> {
 			logger.info("Delete test modules pattern: " + prop);
-			c.setDeleteTestModulesPattern(prop);
-		}
+			config.setDeleteTestModulesPattern(prop);
+		});
 
-		prop = getProperty("mlModulesLoaderThreadCount");
-		if (prop != null) {
+		propertyConsumerMap.put("mlModulesLoaderThreadCount", (config, prop) -> {
 			logger.info("Modules loader thread count: " + prop);
-			c.setModulesLoaderThreadCount(Integer.parseInt(prop));
-		}
+			config.setModulesLoaderThreadCount(Integer.parseInt(prop));
+		});
+
+		propertyConsumerMap.put("mlModulesLoaderBatchSize", (config, prop) -> {
+			logger.info("Modules loader batch size: " + prop);
+			config.setModulesLoaderBatchSize(Integer.parseInt(prop));
+		});
 
 		/**
 		 * The following properties are all for generating Entity Services artifacts.
 		 */
-		prop = getProperty("mlModelsPath");
-		if (prop != null) {
+		propertyConsumerMap.put("mlModelsDatabase", (config, prop) -> {
+			logger.info("Entity Services models database: " + prop);
+			config.setModelsDatabase(prop);
+		});
+
+		propertyConsumerMap.put("mlModelsPath", (config, prop) -> {
 			logger.info("Entity Services models path: " + prop);
-			c.setModelsPath(prop);
-		}
-		prop = getProperty("mlInstanceConverterPath");
-		if (prop != null) {
+			config.setModelsPath(prop);
+		});
+
+		propertyConsumerMap.put("mlInstanceConverterPath", (config, prop) -> {
 			logger.info("Entity Services instance converter path: " + prop);
-			c.setInstanceConverterPath(prop);
-		}
-		prop = getProperty("mlGenerateInstanceConverter");
-		if (prop != null) {
+			config.setInstanceConverterPath(prop);
+		});
+
+		propertyConsumerMap.put("mlGenerateInstanceConverter", (config, prop) -> {
 			logger.info("Entity Services generate instance converter: " + prop);
-			c.setGenerateInstanceConverter(Boolean.parseBoolean(prop));
-		}
-		prop = getProperty("mlGenerateSchema");
-		if (prop != null) {
+			config.setGenerateInstanceConverter(Boolean.parseBoolean(prop));
+		});
+
+		propertyConsumerMap.put("mlGenerateSchema", (config, prop) -> {
 			logger.info("Entity Services generate schema: " + prop);
-			c.setGenerateSchema(Boolean.parseBoolean(prop));
-		}
-		prop = getProperty("mlGenerateSearchOptions");
-		if (prop != null) {
+			config.setGenerateSchema(Boolean.parseBoolean(prop));
+		});
+
+		propertyConsumerMap.put("mlGenerateSearchOptions", (config, prop) -> {
 			logger.info("Entity Services generate search options: " + prop);
-			c.setGenerateSearchOptions(Boolean.parseBoolean(prop));
-		}
-		prop = getProperty("mlGenerateDatabaseProperties");
-		if (prop != null) {
+			config.setGenerateSearchOptions(Boolean.parseBoolean(prop));
+		});
+
+		propertyConsumerMap.put("mlGenerateDatabaseProperties", (config, prop) -> {
 			logger.info("Entity Services generate database properties: " + prop);
-			c.setGenerateDatabaseProperties(Boolean.parseBoolean(prop));
-		}
-		prop = getProperty("mlGenerateExtractionTemplate");
-		if (prop != null) {
+			config.setGenerateDatabaseProperties(Boolean.parseBoolean(prop));
+		});
+
+		propertyConsumerMap.put("mlGenerateExtractionTemplate", (config, prop) -> {
 			logger.info("Entity Services generate extraction template: " + prop);
-			c.setGenerateExtractionTemplate(Boolean.parseBoolean(prop));
-		}
+			config.setGenerateExtractionTemplate(Boolean.parseBoolean(prop));
+		});
+
 		// End Entity Services properties
 
 		/**
@@ -604,36 +757,130 @@ public class DefaultAppConfigFactory extends PropertySourceFactory implements Ap
 		 * the Command itself. So in order for this property to be applied, you must execute a Command via a subclass of
 		 * AbstractAppDeployer (most commonly SimpleAppDeployer).
 		 */
-		prop = getProperty("mlResourceFilenamesToIgnore");
-		if (prop != null) {
+		propertyConsumerMap.put("mlResourceFilenamesToIgnore", (config, prop) -> {
 			String[] values = prop.split(",");
 			logger.info("Ignoring resource filenames: " + Arrays.asList(values));
-			c.setResourceFilenamesToIgnore(values);
-		}
+			config.setResourceFilenamesToIgnore(values);
+		});
 
-		prop = getProperty("mlResourceFilenamesToExcludeRegex");
-		if (prop != null) {
+		propertyConsumerMap.put("mlResourceFilenamesToExcludeRegex", (config, prop) -> {
 			logger.info("Excluding resource filenames matching regex: " + prop);
-			c.setResourceFilenamesExcludePattern(Pattern.compile(prop));
-		}
+			config.setResourceFilenamesExcludePattern(Pattern.compile(prop));
+		});
 
-		prop = getProperty("mlResourceFilenamesToIncludeRegex");
-		if (prop != null) {
+		propertyConsumerMap.put("mlResourceFilenamesToIncludeRegex", (config, prop) -> {
 			logger.info("Including resource filenames matching regex: " + prop);
-			c.setResourceFilenamesIncludePattern(Pattern.compile(prop));
-		}
+			config.setResourceFilenamesIncludePattern(Pattern.compile(prop));
+		});
 
-		/**
-		 * Version 2.9.0 of ml-app-deployer, by default, sorts role files by reading each file and looking at the role
-		 * dependencies. You can disable this behavior by setting this property to false.
-		 */
-		prop = getProperty("mlSortRolesByDependencies");
-		if (prop != null) {
-			logger.info("Sort roles by dependencies: " + prop);
-			c.setSortRolesByDependencies(Boolean.parseBoolean(prop));
-		}
+		propertyConsumerMap.put("mlExcludeProperties", (config, prop) -> {
+			String[] values = prop.split(",");
+			logger.info("Will exclude these properties from all resource payloads: " + Arrays.asList(values));
+			config.setExcludeProperties(values);
+		});
 
-		return c;
+		propertyConsumerMap.put("mlIncludeProperties", (config, prop) -> {
+			String[] values = prop.split(",");
+			logger.info("Will include only these properties in all resource payloads: " + Arrays.asList(values));
+			config.setIncludeProperties(values);
+		});
+
+		propertyConsumerMap.put("mlIncremental", (config, prop) -> {
+			logger.info("Supported resources will only be deployed if their resource files are new or have been modified since the last deployment: " + prop);
+			config.setIncrementalDeploy(Boolean.parseBoolean(prop));
+		});
+
+		propertyConsumerMap.put("mlUpdateMimetypeWhenPropertiesAreEqual", (config, prop) -> {
+			logger.info("Update mimetype when properties are equal (defaults to false to avoid unnecessary ML restarts): " + prop);
+			config.setUpdateMimetypeWhenPropertiesAreEqual(Boolean.parseBoolean(prop));
+		});
+
+		registerDataLoadingProperties();
+		registerPluginProperties();
+	}
+
+	protected void registerDataLoadingProperties() {
+		propertyConsumerMap.put("mlDataBatchSize", (config, prop) -> {
+			logger.info("Batch size for loading data: " + prop);
+			config.getDataConfig().setBatchSize(Integer.parseInt(prop));
+		});
+
+		propertyConsumerMap.put("mlDataCollections", (config, prop) -> {
+			logger.info("Collections that data will be loaded into: " + prop);
+			config.getDataConfig().setCollections(prop.split(","));
+		});
+
+		propertyConsumerMap.put("mlDataDatabaseName", (config, prop) -> {
+			logger.info("Database that data will be loaded into: " + prop);
+			config.getDataConfig().setDatabaseName(prop);
+		});
+
+		propertyConsumerMap.put("mlDataPaths", (config, prop) -> {
+			logger.info("Paths that data will be loaded from: " + prop);
+			List<String> paths = new ArrayList<>();
+			for (String s : prop.split(",")) {
+				String path = this.projectDir != null ? new File(projectDir, s).getAbsolutePath() : s;
+				paths.add(path);
+			}
+			config.getDataConfig().setDataPaths(paths);
+		});
+
+		propertyConsumerMap.put("mlDataLoadingEnabled", (config, prop) -> {
+			logger.info("Whether data loading is enabled: " + prop);
+			config.getDataConfig().setDataLoadingEnabled(Boolean.parseBoolean(prop));
+		});
+
+		propertyConsumerMap.put("mlDataLogUris", (config, prop) -> {
+			logger.info("Log URIs when loading data: " + prop);
+			config.getDataConfig().setLogUris(Boolean.parseBoolean(prop));
+		});
+
+		propertyConsumerMap.put("mlDataPermissions", (config, prop) -> {
+			logger.info("Permissions to be applied to loaded data: " + prop);
+			config.getDataConfig().setPermissions(prop);
+		});
+
+		propertyConsumerMap.put("mlDataReplaceTokens", (config, prop) -> {
+			logger.info("Whether tokens will be replaced when loading data: " + prop);
+			config.getDataConfig().setReplaceTokensInData(Boolean.parseBoolean(prop));
+		});
+	}
+
+	protected void registerPluginProperties() {
+		propertyConsumerMap.put("mlPluginDatabaseName", (config, prop) -> {
+			logger.info("Database that plugins will be loaded into and installed from: " + prop);
+			config.getPluginConfig().setDatabaseName(prop);
+		});
+
+		propertyConsumerMap.put("mlPluginInstallationEnabled", (config, prop) -> {
+			logger.info("Whether plugins will be installed: " + prop);
+			config.getPluginConfig().setEnabled(Boolean.parseBoolean(prop));
+		});
+
+		propertyConsumerMap.put("mlPluginPaths", (config, prop) -> {
+			logger.info("Paths that plugins will be installed from: " + prop);
+			config.getPluginConfig().setPluginPaths(buildPathListFromCommaDelimitedString(prop));
+		});
+
+		propertyConsumerMap.put("mlPluginUriPrefix", (config, prop) -> {
+			logger.info("URI prefix for plugins: " + prop);
+			config.getPluginConfig().setUriPrefix(prop);
+		});
+	}
+
+	protected ConfigDir buildConfigDir(String path) {
+		File baseDir = this.projectDir != null ? new File(this.projectDir, path) : new File(path);
+		return new ConfigDir(baseDir);
+	}
+
+	protected List<String> buildPathListFromCommaDelimitedString(String prop) {
+		String[] paths = prop.split(",");
+		List<String> list = new ArrayList<>();
+		for (String s : paths) {
+			String path = this.projectDir != null ? new File(projectDir, s).getAbsolutePath() : s;
+			list.add(path);
+		}
+		return list;
 	}
 
 	protected Map<String, String> buildMapFromCommaDelimitedString(String str) {
@@ -643,5 +890,33 @@ public class DefaultAppConfigFactory extends PropertySourceFactory implements Ap
 			map.put(tokens[i], tokens[i + 1]);
 		}
 		return map;
+	}
+
+	protected Map<String, List<String>> buildMapOfListsFromDelimitedString(String str) {
+		String[] tokens = str.split(",");
+		Map<String, List<String>> map = new LinkedHashMap<>();
+		for (int i = 0; i < tokens.length; i += 2) {
+			String dbName = tokens[i];
+			String[] hostNames = tokens[i + 1].split("\\|");
+			List<String> names = new ArrayList<>();
+			for (String name : hostNames) {
+				names.add(name);
+			}
+			map.put(dbName, names);
+		}
+		return map;
+	}
+
+	/**
+	 * This is provided so that a client can easily print out a list of all the supported properties.
+	 *
+	 * @return
+	 */
+	public Map<String, BiConsumer<AppConfig, String>> getPropertyConsumerMap() {
+		return propertyConsumerMap;
+	}
+
+	public void setProjectDir(File projectDir) {
+		this.projectDir = projectDir;
 	}
 }

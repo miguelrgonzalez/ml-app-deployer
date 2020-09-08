@@ -3,7 +3,6 @@ package com.marklogic.appdeployer;
 import com.marklogic.appdeployer.command.Command;
 import com.marklogic.appdeployer.command.modules.DefaultModulesLoaderFactory;
 import com.marklogic.appdeployer.command.modules.LoadModulesCommand;
-import com.marklogic.appdeployer.command.restapis.DeployRestApiServersCommand;
 import com.marklogic.appdeployer.impl.SimpleAppDeployer;
 import com.marklogic.client.ext.modulesloader.impl.DefaultModulesLoader;
 import com.marklogic.mgmt.AbstractMgmtTest;
@@ -34,19 +33,18 @@ public abstract class AbstractAppDeployerTest extends AbstractMgmtTest {
     }
 
     protected void initializeAppConfig() {
-        appConfig = new AppConfig("src/test/resources/sample-app/src/main/ml-modules", "src/test/resources/sample-app/src/main/ml-schemas");
-        appConfig.setName(SAMPLE_APP_NAME);
-        appConfig.setRestPort(SAMPLE_APP_REST_PORT);
-        ConfigDir configDir = new ConfigDir(new File("src/test/resources/sample-app/src/main/ml-config"));
-        appConfig.setConfigDir(configDir);
-
-        // Assume that the manager user can also be used as the REST admin user
-        appConfig.setRestAdminUsername(manageConfig.getUsername());
-        appConfig.setRestAdminPassword(manageConfig.getPassword());
+    	initializeAppConfig(new File("src/test/resources/sample-app"));
     }
 
-    protected void initializeAppDeployer() {
-        initializeAppDeployer(new DeployRestApiServersCommand());
+    protected void initializeAppConfig(File projectDir) {
+	    appConfig = new AppConfig(projectDir);
+
+	    appConfig.setName(SAMPLE_APP_NAME);
+	    appConfig.setRestPort(SAMPLE_APP_REST_PORT);
+
+	    // Assume that the manager user can also be used as the REST admin user
+	    appConfig.setRestAdminUsername(manageConfig.getUsername());
+	    appConfig.setRestAdminPassword(manageConfig.getPassword());
     }
 
     /**
@@ -63,16 +61,18 @@ public abstract class AbstractAppDeployerTest extends AbstractMgmtTest {
     }
 
     protected void undeploySampleApp() {
-        try {
-            appDeployer.undeploy(appConfig);
-        } catch (Exception e) {
-            logger.warn("Unexpected error while undeploying sample app: " + e.getMessage());
-        }
+    	if (appDeployer != null) {
+		    try {
+			    appDeployer.undeploy(appConfig);
+		    } catch (Exception e) {
+			    throw new RuntimeException("Unexpected error while undeploying sample app: " + e.getMessage(), e);
+		    }
+	    }
     }
 
     protected XccTemplate newModulesXccTemplate() {
-        return new XccTemplate(format("xcc://%s:%s@%s:8000/%s", appConfig.getRestAdminUsername(),
-                appConfig.getRestAdminPassword(), appConfig.getHost(), appConfig.getModulesDatabaseName()));
+    	return new XccTemplate(appConfig.getHost(), appConfig.getAppServicesPort(), appConfig.getRestAdminUsername(),
+		    appConfig.getRestAdminPassword(), appConfig.getModulesDatabaseName());
     }
 
     /**
@@ -89,6 +89,6 @@ public abstract class AbstractAppDeployerTest extends AbstractMgmtTest {
     }
 
     protected void setConfigBaseDir(String path) {
-        appConfig.getConfigDir().setBaseDir(new File("src/test/resources/" + path));
+        appConfig.getFirstConfigDir().setBaseDir(new File("src/test/resources/" + path));
     }
 }

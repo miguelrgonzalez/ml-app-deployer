@@ -6,11 +6,14 @@ import com.marklogic.rest.util.Fragment;
 import com.marklogic.rest.util.ResourcesFragment;
 import org.springframework.web.client.ResourceAccessException;
 
-import java.util.List;
-
 public class ProtectedPathManager extends AbstractResourceManager {
 	public ProtectedPathManager(ManageClient client) {
 		super(client);
+	}
+
+	@Override
+	protected boolean useSecurityUser() {
+		return true;
 	}
 
 	@Override
@@ -30,7 +33,7 @@ public class ProtectedPathManager extends AbstractResourceManager {
 
 	@Override
 	public String getPropertiesPath(String resourceNameOrId, String... resourceUrlParams) {
-		return getResourcesPath()  + "/" + getIdForPathExpression(resourceNameOrId) + "/properties";
+		return getResourcesPath() + "/" + getIdForPathExpression(resourceNameOrId) + "/properties";
 	}
 
 	@Override
@@ -47,27 +50,28 @@ public class ProtectedPathManager extends AbstractResourceManager {
 
 	@Override
 	public boolean exists(String resourceNameOrId, String... resourceUrlParams) {
-		Fragment f = getAsXml();
-		return f.elementExists(format(
+		if (logger.isInfoEnabled()) {
+			logger.info("Checking for existence of resource: " + resourceNameOrId);
+		}
+		return getAsXml().elementExists(format(
 			"/node()/*[local-name(.) = 'list-items']/node()[*[local-name(.) = 'nameref'] = '%s']",
 			resourceNameOrId));
 	}
 
 	public String getIdForPathExpression(String pathExpression) {
-		Fragment f = getAsXml();
+		return getIdForPathExpression(pathExpression, getAsXml());
+	}
+
+	public String getIdForPathExpression(String pathExpression, Fragment resourcesXml) {
 		String xpath = "/node()/*[local-name(.) = 'list-items']/node()"
 			+ "[*[local-name(.) = 'nameref'] = '%s']/*[local-name(.) = 'idref']";
 		xpath = String.format(xpath, pathExpression);
-		String id = f.getElementValue(xpath);
+		String id = resourcesXml.getElementValue(xpath);
 		if (id == null) {
 			throw new RuntimeException("Could not find a protected path with a path-expression of: " + pathExpression);
 		}
 		return id;
 	}
-
-	@Override
-	protected boolean useAdminUser() { return true; }
-
 
 	/**
 	 * Testing the deployment/undeployment of protected paths intermittently fails when performing a GET on the
@@ -79,12 +83,12 @@ public class ProtectedPathManager extends AbstractResourceManager {
 	@Override
 	public ResourcesFragment getAsXml() {
 		try {
-			return new ResourcesFragment(getManageClient().getXmlAsAdmin(getResourcesPath()));
+			return new ResourcesFragment(getManageClient().getXmlAsSecurityUser(getResourcesPath()));
 		} catch (ResourceAccessException ex) {
 			if (logger.isWarnEnabled()) {
 				logger.warn("Unable to get list of protected paths, retrying; cause: " + ex.getMessage());
 			}
-			return new ResourcesFragment(getManageClient().getXmlAsAdmin(getResourcesPath()));
+			return new ResourcesFragment(getManageClient().getXmlAsSecurityUser(getResourcesPath()));
 		}
 	}
 

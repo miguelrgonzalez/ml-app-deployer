@@ -9,11 +9,10 @@ public class PrivilegeManager extends AbstractResourceManager {
         super(client);
     }
 
-    @Override
-    protected boolean useAdminUser() {
-        return true;
-    }
-
+	@Override
+	protected boolean useSecurityUser() {
+		return true;
+	}
 
     @Override
     protected String[] getUpdateResourceParams(String payload) {

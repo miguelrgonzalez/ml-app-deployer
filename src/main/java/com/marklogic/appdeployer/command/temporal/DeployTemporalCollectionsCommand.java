@@ -25,10 +25,12 @@ public class DeployTemporalCollectionsCommand extends AbstractResourceCommand {
 	@Override
 	public void execute(CommandContext context) {
 		AppConfig appConfig = context.getAppConfig();
-		deployTemporalCollections(context, appConfig.getConfigDir(), appConfig.getContentDatabaseName());
-
-		for (File dir : appConfig.getConfigDir().getDatabaseResourceDirectories()) {
-			deployTemporalCollections(context, new ConfigDir(dir), dir.getName());
+		for (ConfigDir configDir : appConfig.getConfigDirs()) {
+			deployTemporalCollections(context, configDir, appConfig.getContentDatabaseName());
+			for (File dir : configDir.getDatabaseResourceDirectories()) {
+				String databaseName = determineDatabaseNameForDatabaseResourceDirectory(context, configDir, dir);
+				deployTemporalCollections(context, new ConfigDir(dir), databaseName);
+			}
 		}
 	}
 

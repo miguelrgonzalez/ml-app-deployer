@@ -9,10 +9,10 @@ public class ExternalSecurityManager extends AbstractResourceManager {
         super(client);
     }
 
-    @Override
-    protected boolean useAdminUser() {
-        return true;
-    }
+	@Override
+	protected boolean useSecurityUser() {
+		return true;
+	}
 
     @Override
     public String getResourcesPath() {

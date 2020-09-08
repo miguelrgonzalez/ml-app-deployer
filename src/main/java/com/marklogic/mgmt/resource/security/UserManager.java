@@ -1,7 +1,7 @@
 package com.marklogic.mgmt.resource.security;
 
-import com.marklogic.mgmt.resource.AbstractResourceManager;
 import com.marklogic.mgmt.ManageClient;
+import com.marklogic.mgmt.resource.AbstractResourceManager;
 
 public class UserManager extends AbstractResourceManager {
 
@@ -9,9 +9,9 @@ public class UserManager extends AbstractResourceManager {
         super(client);
     }
 
-    @Override
-    protected boolean useAdminUser() {
-        return true;
-    }
+	@Override
+	protected boolean useSecurityUser() {
+    	return true;
+	}
 
 }

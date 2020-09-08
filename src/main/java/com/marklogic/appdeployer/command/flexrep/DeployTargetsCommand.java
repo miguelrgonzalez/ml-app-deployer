@@ -7,9 +7,12 @@ import com.marklogic.appdeployer.ConfigDir;
 import com.marklogic.appdeployer.command.AbstractCommand;
 import com.marklogic.appdeployer.command.CommandContext;
 import com.marklogic.appdeployer.command.SortOrderConstants;
+import com.marklogic.mgmt.ManageClient;
+import com.marklogic.mgmt.SaveReceipt;
 import com.marklogic.mgmt.resource.flexrep.TargetManager;
 
 import java.io.File;
+import java.net.URI;
 
 /**
  * The directory structure for this is a bit different from most command. Since targets belong to a certain flexrep
@@ -20,18 +23,22 @@ import java.io.File;
 public class DeployTargetsCommand extends AbstractCommand {
 
 	private String targetDirectorySuffix = "-targets";
+	private TargetManager mgr;
 
 	public DeployTargetsCommand() {
 		setExecuteSortOrder(SortOrderConstants.DEPLOY_FLEXREP_TARGETS);
+		setStoreResourceIdsAsCustomTokens(true);
 	}
 
 	@Override
 	public void execute(CommandContext context) {
 		AppConfig appConfig = context.getAppConfig();
-		deployTargets(context, appConfig.getConfigDir(), appConfig.getContentDatabaseName());
-
-		for (File dir : appConfig.getConfigDir().getDatabaseResourceDirectories()) {
-			deployTargets(context, new ConfigDir(dir), dir.getName());
+		for (ConfigDir configDir : appConfig.getConfigDirs()) {
+			deployTargets(context, configDir, appConfig.getContentDatabaseName());
+			for (File dir : configDir.getDatabaseResourceDirectories()) {
+				String databaseName = determineDatabaseNameForDatabaseResourceDirectory(context, configDir, dir);
+				deployTargets(context, new ConfigDir(dir), databaseName);
+			}
 		}
 	}
 
@@ -43,6 +50,8 @@ public class DeployTargetsCommand extends AbstractCommand {
 					deployTargetsInDirectory(f, context, databaseIdOrName);
 				}
 			}
+		} else {
+			logResourceDirectoryNotFound(configsDir);
 		}
 	}
 
@@ -54,10 +63,21 @@ public class DeployTargetsCommand extends AbstractCommand {
 				dir.getAbsolutePath()));
 		}
 
-		TargetManager mgr = new TargetManager(context.getManageClient(), databaseIdOrName, configName);
+		this.mgr = new TargetManager(context.getManageClient(), databaseIdOrName, configName);
 		for (File f : listFilesInDirectory(dir)) {
-			saveResource(mgr, context, f);
+			SaveReceipt receipt = saveResource(mgr, context, f);
 		}
+	}
+
+	@Override
+	protected void storeTokenForResourceId(SaveReceipt receipt, CommandContext context) {
+		String targetId = mgr.getTargetId(receipt.getResourceId());
+		String key = "%%flexrep-targets-id-" + receipt.getResourceId() + "%%";
+		if (logger.isInfoEnabled()) {
+			logger.info(format("Storing token with key '%s' and value '%s'", key, targetId));
+		}
+
+		context.getAppConfig().getCustomTokens().put(key, targetId);
 	}
 
 	protected String extractConfigNameFromDirectory(File dir) {

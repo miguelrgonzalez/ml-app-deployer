@@ -1,15 +1,12 @@
 package com.marklogic.appdeployer.command.cpf;
 
-import org.junit.After;
-import org.junit.Test;
-
 import com.marklogic.appdeployer.AbstractAppDeployerTest;
-import com.marklogic.appdeployer.command.databases.DeployContentDatabasesCommand;
-import com.marklogic.appdeployer.command.databases.DeploySchemasDatabaseCommand;
-import com.marklogic.appdeployer.command.databases.DeployTriggersDatabaseCommand;
+import com.marklogic.appdeployer.command.databases.DeployOtherDatabasesCommand;
 import com.marklogic.appdeployer.command.restapis.DeployRestApiServersCommand;
 import com.marklogic.mgmt.resource.cpf.PipelineManager;
 import com.marklogic.rest.util.ResourcesFragment;
+import org.junit.After;
+import org.junit.Test;
 
 public class LoadDefaultCpfPipelinesTest extends AbstractAppDeployerTest {
 
@@ -20,17 +17,16 @@ public class LoadDefaultCpfPipelinesTest extends AbstractAppDeployerTest {
 
     @Test
     public void loadDefaultCpfPipelines() {
-        initializeAppDeployer(new DeployRestApiServersCommand(), new DeployContentDatabasesCommand(),
-                new DeploySchemasDatabaseCommand(), new DeployTriggersDatabaseCommand());
+        initializeAppDeployer(new DeployRestApiServersCommand(), new DeployOtherDatabasesCommand(1));
 
         appDeployer.deploy(appConfig);
 
         String dbName = appConfig.getTriggersDatabaseName();
 
-        PipelineManager mgr = new PipelineManager(manageClient);
-        mgr.loadDefaultPipelines(dbName);
+        PipelineManager mgr = new PipelineManager(manageClient, dbName);
+        mgr.loadDefaultPipelines();
 
-        ResourcesFragment f = mgr.getAsXml(dbName);
+        ResourcesFragment f = mgr.getAsXml();
         assertEquals("As of ML 8.0-3, 23 default pipelines should have been loaded", 23, f.getResourceCount());
     }
 }

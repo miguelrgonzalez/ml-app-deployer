@@ -40,6 +40,21 @@ public class MapResourceSelection implements ResourceSelection {
 	}
 
 	@Override
+	public String[] getCpfConfigNames() {
+		return getSelectedResourceNames(CPF_CONFIGS);
+	}
+
+	@Override
+	public String[] getDomainNames() {
+		return getSelectedResourceNames(DOMAINS);
+	}
+
+	@Override
+	public String[] getPipelineNames() {
+		return getSelectedResourceNames(PIPELINES);
+	}
+
+	@Override
 	public String[] getGroupNames() {
 		return getSelectedResourceNames(GROUPS);
 	}
@@ -67,6 +82,11 @@ public class MapResourceSelection implements ResourceSelection {
 	@Override
 	public String[] getTaskNames() {
 		return getSelectedResourceNames(TASKS);
+	}
+
+	@Override
+	public String[] getTriggerNames() {
+		return getSelectedResourceNames(TRIGGERS);
 	}
 
 	@Override

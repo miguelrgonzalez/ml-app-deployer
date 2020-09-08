@@ -1,81 +1,77 @@
 package com.marklogic.rest.util;
 
-import org.apache.http.auth.AuthScope;
-import org.apache.http.auth.UsernamePasswordCredentials;
+import com.marklogic.rest.util.configurer.BasicAuthConfigurer;
+import com.marklogic.rest.util.configurer.NoConnectionReuseConfigurer;
+import com.marklogic.rest.util.configurer.SslConfigurer;
+import com.marklogic.rest.util.configurer.UseSystemPropertiesConfigurer;
 import org.apache.http.client.HttpClient;
-import org.apache.http.conn.ssl.SSLContextBuilder;
-import org.apache.http.conn.ssl.TrustStrategy;
-import org.apache.http.conn.ssl.X509HostnameVerifier;
-import org.apache.http.impl.client.BasicCredentialsProvider;
 import org.apache.http.impl.client.HttpClientBuilder;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.http.client.HttpComponentsClientHttpRequestFactory;
 import org.springframework.web.client.RestTemplate;
 
-import javax.net.ssl.*;
-import java.io.IOException;
-import java.security.cert.CertificateException;
-import java.security.cert.X509Certificate;
+import java.util.ArrayList;
+import java.util.List;
 
+/**
+ * Factory class for constructing a Spring RestTemplate for communicating with the MarkLogic Manage API.
+ * <p>
+ * This class uses an org.apache.http.impl.client.HttpClientBuilder to construct an
+ * org.apache.http.client.HttpClient that is then used to construct a RestTemplate. Instances of the interface
+ * HttpClientBuilderConfigurer can be passed in to customize how the HttpClient is constructed. If no instances are passed
+ * in, then the configurers defined by DEFAULT_CONFIGURERS are used.
+ * </p>
+ * <p>
+ * The DEFAULT_CONFIGURERS variable is public and static but not final so that clients of ml-app-deployer can
+ * fiddle with it to customize how classes within ml-app-deployer construct a RestTemplate.
+ * </p>
+ */
 public class RestTemplateUtil {
 
-	public static RestTemplate newRestTemplate(RestConfig config) {
-		return newRestTemplate(config.getHost(), config.getPort(), config.getUsername(), config.getPassword(), config.isConfigureSimpleSsl());
+	private final static Logger logger = LoggerFactory.getLogger(RestTemplateUtil.class);
+
+	public static List<HttpClientBuilderConfigurer> DEFAULT_CONFIGURERS = new ArrayList<>();
+
+	static {
+		DEFAULT_CONFIGURERS.add(new BasicAuthConfigurer());
+		DEFAULT_CONFIGURERS.add(new SslConfigurer());
+		DEFAULT_CONFIGURERS.add(new NoConnectionReuseConfigurer());
+		DEFAULT_CONFIGURERS.add(new UseSystemPropertiesConfigurer());
 	}
 
 	public static RestTemplate newRestTemplate(String host, int port, String username, String password) {
-		return newRestTemplate(host, port, username, password, false);
+		return newRestTemplate(new RestConfig(host, port, username, password));
 	}
 
-	/**
-	 *
-	 * @param host
-	 * @param port
-	 * @param username
-	 * @param password
-	 * @param configureSimpleSsl if true, then a very simple SSLContext that trusts every request will be added to the
-	 *                           HttpClient that RestTemplate uses
-	 * @return
-	 */
-	public static RestTemplate newRestTemplate(String host, int port, String username, String password, boolean configureSimpleSsl) {
-		BasicCredentialsProvider prov = new BasicCredentialsProvider();
-		prov.setCredentials(new AuthScope(host, port, AuthScope.ANY_REALM), new UsernamePasswordCredentials(username,
-			password));
+	public static RestTemplate newRestTemplate(String host, int port, String username, String password, HttpClientBuilderConfigurer... configurers) {
+		return newRestTemplate(new RestConfig(host, port, username, password), configurers);
+	}
 
-		HttpClientBuilder httpClientBuilder = HttpClientBuilder.create().setDefaultCredentialsProvider(prov);
+	public static RestTemplate newRestTemplate(RestConfig config) {
+		return newRestTemplate(config, DEFAULT_CONFIGURERS);
+	}
 
-		if (configureSimpleSsl) {
-			try {
-				SSLContext sslContext = new SSLContextBuilder().loadTrustMaterial(null, new TrustStrategy() {
-					@Override
-					public boolean isTrusted(X509Certificate[] chain, String authType) throws CertificateException {
-						return true;
-					}
-				}).build();
-				httpClientBuilder.setSslcontext(sslContext);
-				httpClientBuilder.setHostnameVerifier(new X509HostnameVerifier() {
-					@Override
-					public void verify(String host, SSLSocket ssl) throws IOException {}
+	public static RestTemplate newRestTemplate(RestConfig config, List<HttpClientBuilderConfigurer> configurers) {
+		return newRestTemplate(config, configurers.toArray(new HttpClientBuilderConfigurer[]{}));
+	}
 
-					@Override
-					public void verify(String host, X509Certificate cert) throws SSLException {}
+	public static RestTemplate newRestTemplate(RestConfig config, HttpClientBuilderConfigurer... configurers) {
+		HttpClientBuilder httpClientBuilder = HttpClientBuilder.create();
 
-					@Override
-					public void verify(String host, String[] cns, String[] subjectAlts) throws SSLException {}
-
-					@Override
-					public boolean verify(String s, SSLSession sslSession) {
-						return false;
-					}
-				});
-			} catch (Exception ex) {
-				throw new RuntimeException("Unable to configure simple SSL approach: " + ex.getMessage(), ex);
+		if (configurers != null) {
+			for (HttpClientBuilderConfigurer configurer : configurers) {
+				if (logger.isDebugEnabled()) {
+					logger.debug("Applying HttpClientBuilderConfigurer: " + configurer);
+				}
+				httpClientBuilder = configurer.configureHttpClientBuilder(config, httpClientBuilder);
 			}
 		}
 
 		HttpClient client = httpClientBuilder.build();
-
 		RestTemplate rt = new RestTemplate(new HttpComponentsClientHttpRequestFactory(client));
 		rt.setErrorHandler(new MgmtResponseErrorHandler());
 		return rt;
 	}
+
 }

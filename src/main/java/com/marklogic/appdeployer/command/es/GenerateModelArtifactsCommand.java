@@ -4,12 +4,12 @@ import com.marklogic.appdeployer.AppConfig;
 import com.marklogic.appdeployer.command.AbstractCommand;
 import com.marklogic.appdeployer.command.CommandContext;
 import com.marklogic.appdeployer.command.SortOrderConstants;
-import com.marklogic.appdeployer.command.databases.DeploySchemasDatabaseCommand;
 import com.marklogic.client.DatabaseClient;
 import com.marklogic.client.ext.es.CodeGenerationRequest;
 import com.marklogic.client.ext.es.EntityServicesManager;
 import com.marklogic.client.ext.es.GeneratedCode;
 import org.springframework.util.FileCopyUtils;
+import org.springframework.util.StringUtils;
 
 import java.io.File;
 import java.io.IOException;
@@ -39,24 +39,43 @@ public class GenerateModelArtifactsCommand extends AbstractCommand {
 		String modelsPath = appConfig.getModelsPath();
 		File modelsDir = new File(modelsPath);
 		if (modelsDir.exists()) {
-			DatabaseClient client = appConfig.newDatabaseClient();
-			EntityServicesManager mgr = new EntityServicesManager(client);
-			for (File f : modelsDir.listFiles()) {
-				GeneratedCode code = loadModelDefinition(appConfig, f, mgr);
+			DatabaseClient client = buildDatabaseClient(appConfig);
+			try {
+				EntityServicesManager mgr = new EntityServicesManager(client);
+				for (File f : modelsDir.listFiles()) {
+					GeneratedCode code = loadModelDefinition(appConfig, f, mgr);
 
-				File modulesDir = selectModulesDir(appConfig);
-				modulesDir.mkdirs();
+					File modulesDir = selectModulesDir(appConfig);
+					modulesDir.mkdirs();
 
-				generateInstanceConverter(appConfig, code, modulesDir);
-				generateSearchOptions(code, modulesDir);
-				generateDatabaseProperties(appConfig, code);
-				generateSchema(appConfig, code);
-				generateExtractionTemplate(appConfig, code);
+					generateInstanceConverter(appConfig, code, modulesDir);
+					generateSearchOptions(code, modulesDir);
+					generateDatabaseProperties(appConfig, code);
+					generateSchema(appConfig, code);
+					generateExtractionTemplate(appConfig, code);
+				}
+			} finally {
+				client.release();
 			}
 		}
 	}
 
+	protected DatabaseClient buildDatabaseClient(AppConfig appConfig) {
+		String db = appConfig.getModelsDatabase();
+		if (StringUtils.isEmpty(db)) {
+			db = appConfig.getContentDatabaseName();
+		}
+		if (logger.isInfoEnabled()) {
+			logger.info("Will load Entity Services models into database: " + db);
+		}
+		return appConfig.newAppServicesDatabaseClient(db);
+	}
+
 	protected GeneratedCode loadModelDefinition(AppConfig appConfig, File f, EntityServicesManager mgr) {
+		return loadModelDefinition(buildCodeGenerationRequest(appConfig),f,mgr);
+	}
+
+	protected GeneratedCode loadModelDefinition(CodeGenerationRequest codeGenerationRequest, File f, EntityServicesManager mgr) {
 		String name = f.getName();
 		String modelDefinition = null;
 		try {
@@ -65,7 +84,7 @@ public class GenerateModelArtifactsCommand extends AbstractCommand {
 			throw new RuntimeException("Unable to read model definition from file: " + f.getAbsolutePath(), e);
 		}
 		String modelUri = mgr.loadModel(name, modelDefinition);
-		return mgr.generateCode(modelUri, buildCodeGenerationRequest(appConfig));
+		return mgr.generateCode(modelUri, codeGenerationRequest);
 	}
 
 	protected CodeGenerationRequest buildCodeGenerationRequest(AppConfig appConfig) {
@@ -105,7 +124,7 @@ public class GenerateModelArtifactsCommand extends AbstractCommand {
 					}
 					return;
 				}
-				out = new File(esDir, code.getTitle() + "-" + code.getVersion() + "-GENERATED.xqy");
+				out = new File(esDir, code.getTitle() + "-" + code.getVersion() + ".xqy.GENERATED");
 				logMessage = "Instance converter does not match existing file, so writing to: ";
 			}
 			try {
@@ -133,7 +152,7 @@ public class GenerateModelArtifactsCommand extends AbstractCommand {
 					}
 					return;
 				}
-				out = new File(optionsDir, code.getTitle() + "-GENERATED.xml");
+				out = new File(optionsDir, code.getTitle() + "xml.GENERATED");
 				logMessage = "Search options does not match existing file, so writing to: ";
 			}
 			try {
@@ -157,7 +176,7 @@ public class GenerateModelArtifactsCommand extends AbstractCommand {
 	protected void generateDatabaseProperties(AppConfig appConfig, GeneratedCode code) {
 		String props = code.getDatabaseProperties();
 		if (props != null) {
-			File dbDir = appConfig.getConfigDir().getDatabasesDir();
+			File dbDir = appConfig.getFirstConfigDir().getDatabasesDir();
 			dbDir.mkdirs();
 			File out = new File(dbDir, "content-database.json");
 			String logMessage = "Wrote database properties to: ";
@@ -168,7 +187,7 @@ public class GenerateModelArtifactsCommand extends AbstractCommand {
 					}
 					return;
 				}
-				out = new File(dbDir, "content-database-GENERATED.json");
+				out = new File(dbDir, "content-database.json.GENERATED");
 				logMessage = "Database properties does not match existing file, so writing to: ";
 			}
 			try {
@@ -178,7 +197,7 @@ public class GenerateModelArtifactsCommand extends AbstractCommand {
 				}
 
 				// Makes some assumptions about the schemas file
-				File schemasFile = new File(dbDir, DeploySchemasDatabaseCommand.DATABASE_FILENAME);
+				File schemasFile = new File(dbDir, "schemas-database.json");
 				if (!schemasFile.exists()) {
 					String payload = "{\"database-name\": \"%%SCHEMAS_DATABASE%%\"}";
 					try {
@@ -196,7 +215,7 @@ public class GenerateModelArtifactsCommand extends AbstractCommand {
 	protected void generateSchema(AppConfig appConfig, GeneratedCode code) {
 		String schema = code.getSchema();
 		if (schema != null) {
-			File dir = new File(appConfig.getSchemasPath());
+			File dir = new File(appConfig.getSchemaPaths().get(0));
 			dir.mkdirs();
 			File out = new File(dir, code.getTitle() + "-" + code.getVersion() + ".xsd");
 			String logMessage = "Wrote schema to: ";
@@ -207,7 +226,7 @@ public class GenerateModelArtifactsCommand extends AbstractCommand {
 					}
 					return;
 				}
-				out = new File(dir, code.getTitle() + "-" + code.getVersion() + "-GENERATED.xsd");
+				out = new File(dir, code.getTitle() + "-" + code.getVersion() + "xsd.GENERATED");
 				logMessage = "Schema does not match existing file, so writing to: ";
 			}
 			try {
@@ -224,7 +243,7 @@ public class GenerateModelArtifactsCommand extends AbstractCommand {
 	protected void generateExtractionTemplate(AppConfig appConfig, GeneratedCode code) {
 		String template = code.getExtractionTemplate();
 		if (template != null) {
-			File dir = new File(appConfig.getSchemasPath());
+			File dir = new File(appConfig.getSchemaPaths().get(0));
 			dir.mkdirs();
 			dir = new File(dir, "tde");
 			dir.mkdirs();
@@ -237,7 +256,7 @@ public class GenerateModelArtifactsCommand extends AbstractCommand {
 					}
 					return;
 				}
-				out = new File(dir, code.getTitle() + "-" + code.getVersion() + "-GENERATED.tdex");
+				out = new File(dir, code.getTitle() + "-" + code.getVersion() + "tdex.GENERATED");
 				logMessage = "Extraction template does not match existing file, so writing to: ";
 			}
 			try {
@@ -261,11 +280,11 @@ public class GenerateModelArtifactsCommand extends AbstractCommand {
 	 */
 	protected boolean fileHasDifferentContent(File existingFile, String content) {
 		try {
-			String fileContent = new String(FileCopyUtils.copyToByteArray(existingFile));
+			String fileContent = copyFileToString(existingFile);
 			fileContent = removeGeneratedAtTimestamp(fileContent);
 			content = removeGeneratedAtTimestamp(content);
 			return !fileContent.equals(content);
-		} catch (IOException e) {
+		} catch (RuntimeException e) {
 			// Shouldn't occur, but if it does, treat it as the file having different content
 			return true;
 		}

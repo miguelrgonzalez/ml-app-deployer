@@ -21,15 +21,25 @@ public class AdminManager extends AbstractManager {
     private AdminConfig adminConfig;
 
     /**
-     * Can use this constructor when the default values in ManageConfig will work.
+     * Can use this constructor when the default values in AdminConfig will work.
      */
     public AdminManager() {
         this(new AdminConfig());
     }
 
     public AdminManager(AdminConfig adminConfig) {
-        this.adminConfig = adminConfig;
-        this.restTemplate = RestTemplateUtil.newRestTemplate(adminConfig);
+    	setAdminConfig(adminConfig);
+    }
+
+	/**
+	 * Uses the given AdminConfig instance to construct a Spring RestTemplate for communicating with Manage API
+	 * endpoints on port 8001.
+	 *
+	 * @param adminConfig
+	 */
+	public void setAdminConfig(AdminConfig adminConfig) {
+	    this.adminConfig = adminConfig;
+	    this.restTemplate = RestTemplateUtil.newRestTemplate(adminConfig);
     }
 
     public void init() {
@@ -81,13 +91,17 @@ public class AdminManager extends AbstractManager {
         installAdmin(null, null);
     }
 
-    public void installAdmin(String username, String password) {
+	public void installAdmin(String username, String password) {
+		installAdmin(username, password, "public");
+	}
+
+    public void installAdmin(String username, String password, String realm) {
         final URI uri = adminConfig.buildUri("/admin/v1/instance-admin");
 
         String json = null;
         if (username != null && password != null) {
-            json = format("{\"admin-username\":\"%s\", \"admin-password\":\"%s\", \"realm\":\"public\"}", username,
-                    password);
+            json = format("{\"admin-username\":\"%s\", \"admin-password\":\"%s\", \"realm\":\"%s\"}",
+	            username, password, realm);
         } else {
             json = "{}";
         }

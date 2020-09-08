@@ -2,11 +2,10 @@ package com.marklogic.appdeployer.command.schemas;
 
 import com.marklogic.appdeployer.AbstractAppDeployerTest;
 import com.marklogic.appdeployer.command.Command;
-import com.marklogic.appdeployer.command.databases.DeployContentDatabasesCommand;
-import com.marklogic.appdeployer.command.databases.DeploySchemasDatabaseCommand;
-import com.marklogic.appdeployer.command.databases.DeployTriggersDatabaseCommand;
+import com.marklogic.appdeployer.command.databases.DeployOtherDatabasesCommand;
 import com.marklogic.client.DatabaseClient;
 import com.marklogic.client.document.GenericDocumentManager;
+import com.marklogic.client.io.BytesHandle;
 import com.marklogic.client.io.DocumentMetadataHandle;
 import org.junit.After;
 import org.junit.Test;
@@ -16,10 +15,42 @@ import java.io.FileFilter;
 
 public class LoadSchemasTest extends AbstractAppDeployerTest {
 
+	@After
+	public void cleanup() {
+		undeploySampleApp();
+	}
+
+	@Test
+	public void databaseSpecificPaths() {
+		initializeAppDeployer(new DeployOtherDatabasesCommand(), newCommand());
+
+		appConfig.getFirstConfigDir().setBaseDir(new File("src/test/resources/sample-app/multiple-schema-databases/ml-config"));
+		appConfig.setSchemasDatabaseName("sample-app-schemas1");
+		appConfig.getSchemaPaths().clear();
+		appConfig.getSchemaPaths().add("src/test/resources/sample-app/multiple-schema-databases/ml-schemas");
+
+		deploySampleApp();
+
+		DatabaseClient client = appConfig.newSchemasDatabaseClient();
+		GenericDocumentManager mgr = client.newDocumentManager();
+		assertNotNull(mgr.exists("/default-schema.xsd"));
+		assertNotNull(mgr.exists("/schema1.xsd"));
+		assertNull(mgr.exists("/schema2.xsd"));
+		client.release();
+
+		client = appConfig.newAppServicesDatabaseClient("sample-app-schemas2");
+		mgr = client.newDocumentManager();
+		assertNull(mgr.exists("/default-schema.xsd"));
+		assertNull(mgr.exists("/schema1.xsd"));
+		assertNotNull(mgr.exists("/schema2.xsd"));
+		client.release();
+	}
+
 	@Test
 	public void testSchemaLoading() {
-		initializeAppDeployer(new DeploySchemasDatabaseCommand(), new DeployTriggersDatabaseCommand(),
-			new DeployContentDatabasesCommand(1), newCommand());
+		initializeAppDeployer(new DeployOtherDatabasesCommand(1), newCommand());
+
+		appConfig.getCustomTokens().put("%%replaceMe%%", "world");
 		appDeployer.deploy(appConfig);
 
 		DatabaseClient client = appConfig.newSchemasDatabaseClient();
@@ -31,15 +62,20 @@ public class LoadSchemasTest extends AbstractAppDeployerTest {
 		assertNotNull("XSD document loaded", docMgr.exists("/x.xsd").getUri());
 		assertNull(docMgr.exists("/.do-not-load"));
 		assertNull(docMgr.exists(".do-not-load"));
+
+		String content = new String(docMgr.read("/x.xsd", new BytesHandle()).get());
+		assertTrue("Tokens should be replaced when schemas are loaded; actual content: " + content,
+			content.contains("<hello>world</hello>"));
 	}
 
 	@Test
 	public void testCustomSchemasPathWithCustomFileFilter() {
-		initializeAppDeployer(new DeploySchemasDatabaseCommand(), new DeployTriggersDatabaseCommand(),
-			new DeployContentDatabasesCommand(1), newCommand());
+		initializeAppDeployer(new DeployOtherDatabasesCommand(1), newCommand());
 
-		appConfig.setSchemasPath("src/test/resources/schemas-marklogic9");
+		appConfig.getSchemaPaths().clear();
+		appConfig.getSchemaPaths().add("src/test/resources/schemas-marklogic9");
 		appConfig.setSchemasFileFilter(new CustomFileFilter());
+		appConfig.setTdeValidationEnabled(false);
 		appDeployer.deploy(appConfig);
 
 		DatabaseClient client = appConfig.newSchemasDatabaseClient();
@@ -58,9 +94,45 @@ public class LoadSchemasTest extends AbstractAppDeployerTest {
 		}
 	}
 
-	@After
-	public void cleanup() {
-		undeploySampleApp();
+	@Test
+	public void nullSchemaPath() {
+		initializeAppDeployer(newCommand());
+		appConfig.setSchemaPaths(null);
+		deploySampleApp();
+		logger.info("Verifies that no error occurs when the schemas path is null");
+	}
+
+	@Test
+	public void tdeValidationEnabled() {
+		initializeAppDeployer(new DeployOtherDatabasesCommand(1), newCommand());
+		appConfig.getFirstConfigDir().setBaseDir(new File("src/test/resources/sample-app/tde-validation"));
+		try {
+			deploySampleApp();
+			fail("The deploy should have failed because of a bad TDE template");
+		} catch (Exception ex) {
+			String message = ex.getCause().getMessage();
+			assertTrue(message.startsWith("TDE template failed validation"));
+			assertTrue(message.contains("TDE-REPEATEDCOLUMN"));
+		}
+	}
+
+	@Test
+	public void multipleSchemaPaths() {
+		File projectDir = new File("src/test/resources/schemas-project");
+
+		initializeAppConfig(projectDir);
+		appConfig.getSchemaPaths().add(new File(projectDir, "src/main/more-schemas").getAbsolutePath());
+
+		initializeAppDeployer(new DeployOtherDatabasesCommand(1), new LoadSchemasCommand());
+		deploySampleApp();
+
+		DatabaseClient client = appConfig.newSchemasDatabaseClient();
+		GenericDocumentManager docMgr = client.newDocumentManager();
+		assertNotNull(docMgr.exists("/tde/template1.json"));
+		assertNotNull(docMgr.exists("/tde/template2.json"));
+
+		assertTrue(docMgr.readMetadata("/tde/template1.json", new DocumentMetadataHandle()).getCollections().contains("http://marklogic.com/xdmp/tde"));
+		assertTrue(docMgr.readMetadata("/tde/template2.json", new DocumentMetadataHandle()).getCollections().contains("http://marklogic.com/xdmp/tde"));
 	}
 
 	private Command newCommand() {

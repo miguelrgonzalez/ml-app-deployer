@@ -1,10 +1,6 @@
 package com.marklogic.mgmt.api;
 
-import com.fasterxml.jackson.annotation.JsonInclude.Include;
-import com.fasterxml.jackson.core.JsonParser;
-import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.databind.SerializationFeature;
 import com.marklogic.appdeployer.DefaultAppConfigFactory;
 import com.marklogic.client.DatabaseClient;
 import com.marklogic.client.ext.helper.ClientHelper;
@@ -12,7 +8,6 @@ import com.marklogic.client.ext.helper.LoggingObject;
 import com.marklogic.mgmt.DefaultManageConfigFactory;
 import com.marklogic.mgmt.ManageClient;
 import com.marklogic.mgmt.ManageConfig;
-import com.marklogic.mgmt.admin.AdminConfig;
 import com.marklogic.mgmt.admin.AdminManager;
 import com.marklogic.mgmt.api.cluster.Cluster;
 import com.marklogic.mgmt.api.database.Database;
@@ -20,8 +15,11 @@ import com.marklogic.mgmt.api.forest.Forest;
 import com.marklogic.mgmt.api.group.Group;
 import com.marklogic.mgmt.api.restapi.RestApi;
 import com.marklogic.mgmt.api.security.*;
+import com.marklogic.mgmt.api.security.protectedpath.ProtectedPath;
+import com.marklogic.mgmt.api.security.queryroleset.QueryRoleset;
 import com.marklogic.mgmt.api.server.Server;
 import com.marklogic.mgmt.api.task.Task;
+import com.marklogic.mgmt.api.trigger.Trigger;
 import com.marklogic.mgmt.resource.ResourceManager;
 import com.marklogic.mgmt.resource.appservers.ServerManager;
 import com.marklogic.mgmt.resource.databases.DatabaseManager;
@@ -29,11 +27,14 @@ import com.marklogic.mgmt.resource.forests.ForestManager;
 import com.marklogic.mgmt.resource.groups.GroupManager;
 import com.marklogic.mgmt.resource.security.*;
 import com.marklogic.mgmt.resource.tasks.TaskManager;
+import com.marklogic.mgmt.resource.triggers.TriggerManager;
 import com.marklogic.mgmt.util.ObjectMapperFactory;
 import com.marklogic.mgmt.util.SimplePropertySource;
 import com.marklogic.mgmt.util.SystemPropertySource;
 
 import java.io.IOException;
+import java.util.ArrayList;
+import java.util.List;
 
 /**
  * Big facade-style class for the MarkLogic Management API. Use this to instantiate or access any resource, as it will
@@ -48,7 +49,6 @@ public class API extends LoggingObject {
     public API(ManageClient client) {
         this.manageClient = client;
         setObjectMapper(buildDefaultObjectMapper());
-        initializeAdminManager();
     }
 
     public API(ManageClient client, AdminManager adminManager) {
@@ -60,18 +60,6 @@ public class API extends LoggingObject {
     public API(ManageClient client, ObjectMapper mapper) {
         this.manageClient = client;
         this.objectMapper = mapper;
-        initializeAdminManager();
-    }
-
-    protected void initializeAdminManager() {
-    	if (manageClient != null) {
-		    ManageConfig mc = manageClient.getManageConfig();
-		    if (mc.getAdminUsername() != null && mc.getAdminPassword() != null) {
-			    AdminConfig ac = new AdminConfig(mc.getHost(), 8001, mc.getAdminUsername(), mc.getAdminPassword());
-			    ac.setConfigureSimpleSsl(mc.isAdminConfigureSimpleSsl());
-			    this.adminManager = new AdminManager(ac);
-		    }
-	    }
     }
 
     protected ObjectMapper buildDefaultObjectMapper() {
@@ -100,27 +88,13 @@ public class API extends LoggingObject {
 		    logger.info("Connecting to host: " + host);
 	    }
 	    SimplePropertySource sps = new SimplePropertySource("mlHost", host, "mlManageUsername", mc.getUsername(),
-		    "mlManagePassword", mc.getPassword(), "mlAdminUsername", mc.getAdminUsername(), "mlAdminPassword", mc.getAdminPassword(),
-		    "mlManageSimpleSsl", mc.isConfigureSimpleSsl() + "", "mlAdminSimpleSsl", mc.isAdminConfigureSimpleSsl() + "",
-		    "mlManageScheme", mc.getScheme(), "mlAdminScheme", mc.getAdminScheme(), "mlAdminPort", mc.getAdminPort() + "",
-		    "mlManagePort", mc.getPort() + "");
+		    "mlManagePassword", mc.getPassword(), "mlManageSimpleSsl", mc.isConfigureSimpleSsl() + "",
+		    "mlManageScheme", mc.getScheme(), "mlManagePort", mc.getPort() + "",
+		    "mlSecurityUsername", mc.getSecurityUsername(), "mlSecurityPassword", mc.getSecurityPassword());
 	    this.manageClient = new ManageClient(new DefaultManageConfigFactory(sps).newManageConfig());
-	    initializeAdminManager();
 	    if (logger.isInfoEnabled()) {
 		    logger.info("Connected to host: " + host);
 	    }
-    }
-
-    /**
-     * Connect to a (presumably) different MarkLogic Management API. The username/password are assumed to work for both
-     * the Management API and the Admin API on port 8001.
-     *
-     * @param host
-     * @param username
-     * @param password
-     */
-    public void connect(String host, String username, String password) {
-        connect(host, username, password, username, password);
     }
 
     /**
@@ -129,25 +103,36 @@ public class API extends LoggingObject {
      * @param host
      * @param username
      * @param password
-     * @param adminUsername
-     * @param adminPassword
      */
-    public void connect(String host, String username, String password, String adminUsername, String adminPassword) {
-    	ManageConfig mc = new ManageConfig();
-    	mc.setHost(host);
-    	mc.setUsername(username);
-    	mc.setPassword(password);
-    	mc.setAdminUsername(adminUsername);
-    	mc.setAdminPassword(adminPassword);
-    	connect(host, mc);
+    public void connect(String host, String username, String password) {
+	    connect(host, username, password, username, password);
     }
 
-    /**
-     * Constructs a new ClientHelper, using newClient().
-     *
-     * @return
-     */
-    public ClientHelper clientHelper() {
+	/**
+	 * Connect to a (presumably) different MarkLogic Management API.
+	 *
+	 * @param host
+	 * @param username
+	 * @param password
+	 * @param securityUsername
+	 * @param securityPassword
+	 */
+	public void connect(String host, String username, String password, String securityUsername, String securityPassword) {
+		ManageConfig mc = new ManageConfig();
+		mc.setHost(host);
+		mc.setUsername(username);
+		mc.setPassword(password);
+		mc.setSecurityUsername(securityUsername);
+		mc.setSecurityPassword(securityPassword);
+		connect(host, mc);
+	}
+
+	/**
+	 * Constructs a new ClientHelper, using newClient().
+	 *
+	 * @return
+	 */
+	public ClientHelper clientHelper() {
         return new ClientHelper(newClient());
     }
 
@@ -249,11 +234,36 @@ public class API extends LoggingObject {
         return forest(null);
     }
 
-    public Server server(String name) {
-        return server(name, null);
+    public ProtectedPath protectedPath(String pathExpression) {
+    	ProtectedPath path = new ProtectedPath(pathExpression);
+    	path.setApi(this);
+    	return pathExpression != null && path.exists() ?
+		    getResource(pathExpression, new ProtectedPathManager(getManageClient()), ProtectedPath.class) : path;
     }
 
-    public Server server(String name, Integer port) {
+    public QueryRoleset queryRoleset(String... roleNames) {
+	    List<String> names = new ArrayList<>();
+	    for (String name : roleNames) {
+	    	names.add(name);
+	    }
+    	QueryRoleset roleset = new QueryRoleset();
+	    roleset.setApi(this);
+	    roleset.setRoleName(names);
+    	return roleNames != null && roleset.exists() ?
+		    getResource(roleset.getRoleNamesAsJsonArrayString(), new QueryRolesetManager(getManageClient()), QueryRoleset.class) :
+		    roleset;
+    }
+
+    public Server server(String name) {
+        return server(name, (Integer)null);
+    }
+
+	public Server server(String name, String groupName) {
+		Server s = new Server(this, name);
+		return name != null && s.exists() ? getResource(name, new ServerManager(getManageClient(), groupName), Server.class) : s;
+	}
+
+	public Server server(String name, Integer port) {
         Server s = new Server(this, name);
         s.setPort(port);
         return name != null && s.exists() ? getResource(name, new ServerManager(getManageClient()), Server.class) : s;
@@ -261,6 +271,17 @@ public class API extends LoggingObject {
 
     public Server getServer() {
         return server(null);
+    }
+
+    public Trigger trigger(String name, String databaseName) {
+    	Trigger t = new Trigger();
+    	t.setApi(this);
+    	t.setName(name);
+    	t.setDatabaseName(databaseName);
+    	if (name != null && t.exists()) {
+    		return getResource(name, new TriggerManager(getManageClient(), databaseName), Trigger.class);
+	    }
+    	return t;
     }
 
     /**
@@ -294,17 +315,27 @@ public class API extends LoggingObject {
         return externalSecurity(null);
     }
 
-    public Privilege privilege(String name) {
+    public Privilege privilegeExecute(String name) {
         Privilege p = new Privilege(this, name);
-        return name != null && p.exists() ? getResource(name, new PrivilegeManager(getManageClient()), Privilege.class)
+        return name != null && p.exists() ? getResource(name, new PrivilegeManager(getManageClient()), Privilege.class, "kind", "execute")
                 : p;
     }
 
-    public Privilege getPrivilege() {
-        return privilege(null);
+    public Privilege getPrivilegeExecute() {
+        return privilegeExecute(null);
     }
 
-    public ProtectedCollection protectedCollection(String name) {
+	public Privilege privilegeUri(String name) {
+		Privilege p = new Privilege(this, name);
+		return name != null && p.exists() ? getResource(name, new PrivilegeManager(getManageClient()), Privilege.class, "kind", "uri")
+			: p;
+	}
+
+	public Privilege getPrivilegeUri() {
+		return privilegeUri(null);
+	}
+
+	public ProtectedCollection protectedCollection(String name) {
         ProtectedCollection pc = new ProtectedCollection(this, name);
         return name != null && pc.exists() ? getResource(name, new ProtectedCollectionsManager(getManageClient()),
                 ProtectedCollection.class) : pc;
@@ -333,8 +364,14 @@ public class API extends LoggingObject {
     }
 
     public Task task(String taskId) {
+    	return task(taskId, Group.DEFAULT_GROUP_NAME);
+    }
+
+    public Task task(String taskId, String groupId) {
         Task t = new Task(this, taskId);
-        return taskId != null && t.exists() ? getResource(taskId, new TaskManager(getManageClient()), Task.class) : t;
+        return taskId != null && t.exists() ?
+	        getResource(taskId, new TaskManager(getManageClient()), Task.class, "group-id", groupId) :
+	        t;
     }
 
     public Task getTask() {

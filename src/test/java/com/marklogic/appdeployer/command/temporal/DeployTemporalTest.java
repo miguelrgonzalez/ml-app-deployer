@@ -1,9 +1,7 @@
 package com.marklogic.appdeployer.command.temporal;
 
 import com.marklogic.appdeployer.AbstractAppDeployerTest;
-import com.marklogic.appdeployer.command.databases.DeployContentDatabasesCommand;
 import com.marklogic.appdeployer.command.databases.DeployOtherDatabasesCommand;
-import com.marklogic.appdeployer.command.databases.DeploySchemasDatabaseCommand;
 import com.marklogic.mgmt.resource.temporal.TemporalAxesManager;
 import com.marklogic.mgmt.resource.temporal.TemporalCollectionManager;
 import com.marklogic.rest.util.ResourcesFragment;
@@ -15,12 +13,11 @@ public class DeployTemporalTest extends AbstractAppDeployerTest {
 
 	@Test
 	public void test() {
-		appConfig.getConfigDir().setBaseDir(new File("src/test/resources/sample-app/temporal-config-with-lsqt"));
+		appConfig.getFirstConfigDir().setBaseDir(new File("src/test/resources/sample-app/temporal-config-with-lsqt"));
 
-		initializeAppDeployer(new DeployContentDatabasesCommand(1),
-			new DeploySchemasDatabaseCommand(), new DeployTemporalAxesCommand(),
+		initializeAppDeployer(new DeployTemporalAxesCommand(),
 			new DeployTemporalCollectionsCommand(), new DeployTemporalCollectionsLSQTCommand(),
-			new DeployOtherDatabasesCommand());
+			new DeployOtherDatabasesCommand(1));
 
 		try {
 			appDeployer.deploy(appConfig);

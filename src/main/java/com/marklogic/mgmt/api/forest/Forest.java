@@ -1,10 +1,9 @@
 package com.marklogic.mgmt.api.forest;
 
-import com.fasterxml.jackson.annotation.JsonProperty;
-import com.marklogic.mgmt.resource.ResourceManager;
 import com.marklogic.mgmt.api.API;
 import com.marklogic.mgmt.api.Resource;
-import com.marklogic.mgmt.api.database.DatabaseReplication;
+import com.marklogic.mgmt.api.database.ForestDatabaseReplication;
+import com.marklogic.mgmt.resource.ResourceManager;
 import com.marklogic.mgmt.resource.forests.ForestManager;
 import com.marklogic.mgmt.resource.hosts.HostManager;
 
@@ -50,10 +49,11 @@ public class Forest extends Resource {
 	private List<String> failoverHost;
 
 	@XmlElementWrapper(name = "forest-backups")
+	@XmlElement(name = "forest-backup")
 	private List<ForestBackup> forestBackup;
 
-	@XmlElementWrapper(name = "database-replication")
-	private DatabaseReplication databaseReplication;
+	@XmlElement(name = "database-replication")
+	private ForestDatabaseReplication databaseReplication;
 
 	@XmlElementWrapper(name = "forest-replicas")
 	@XmlElement(name = "forest-replica")
@@ -205,11 +205,11 @@ public class Forest extends Resource {
         this.forestBackup = forestBackup;
     }
 
-    public DatabaseReplication getDatabaseReplication() {
+    public ForestDatabaseReplication getDatabaseReplication() {
         return databaseReplication;
     }
 
-    public void setDatabaseReplication(DatabaseReplication databaseReplication) {
+    public void setDatabaseReplication(ForestDatabaseReplication databaseReplication) {
         this.databaseReplication = databaseReplication;
     }
 

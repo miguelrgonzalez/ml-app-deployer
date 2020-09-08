@@ -1,7 +1,6 @@
 package com.marklogic.appdeployer;
 
 import java.io.File;
-import java.io.FileFilter;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
@@ -13,6 +12,8 @@ import java.util.List;
  */
 public class ConfigDir {
 
+	public final static String DEFAULT_PATH = "src/main/ml-config";
+
 	private File baseDir;
 
 	private String databasesPath = "databases";
@@ -20,10 +21,17 @@ public class ConfigDir {
 
 	private String restApiPath = "rest-api.json";
 
-	private List<File> contentDatabaseFiles;
+	private File projectDir;
+
+	public static ConfigDir withProjectDir(File projectDir) {
+		File baseDir = projectDir != null ? new File(projectDir, DEFAULT_PATH) : new File(DEFAULT_PATH);
+		ConfigDir configDir = new ConfigDir(baseDir);
+		configDir.projectDir = projectDir;
+		return configDir;
+	}
 
 	public ConfigDir() {
-		this(new File("src/main/ml-config"));
+		new File(DEFAULT_PATH);
 	}
 
 	public ConfigDir(File baseDir) {
@@ -32,7 +40,6 @@ public class ConfigDir {
 
 	public void setBaseDir(File baseDir) {
 		this.baseDir = baseDir;
-		initializeContentDatabaseFiles();
 	}
 
 	public File getDatabasesDir() {
@@ -48,20 +55,10 @@ public class ConfigDir {
 	public List<File> getDatabaseResourceDirectories() {
 		File dbDir = getDatabasesDir();
 		if (dbDir != null && dbDir.exists()) {
-			File[] dirs = dbDir.listFiles(new FileFilter() {
-				@Override
-				public boolean accept(File pathname) {
-					return pathname.isDirectory();
-				}
-			});
+			File[] dirs = dbDir.listFiles(pathname -> pathname.isDirectory());
 			return Arrays.asList(dirs);
 		}
-		return new ArrayList<File>();
-	}
-
-	protected void initializeContentDatabaseFiles() {
-		contentDatabaseFiles = new ArrayList<>();
-		contentDatabaseFiles.add(new File(getDatabasesDir(), defaultContentDatabaseFilename));
+		return new ArrayList<>();
 	}
 
 	public File getRestApiFile() {
@@ -72,6 +69,10 @@ public class ConfigDir {
 		return new File(getServersDir(), "rest-api-server.json");
 	}
 
+	public File getConfigurationsDir() {
+		return new File(baseDir, "configurations");
+	}
+
 	public File getSecurityDir() {
 		return new File(baseDir, "security");
 	}
@@ -80,12 +81,51 @@ public class ConfigDir {
 		return new File(getSecurityDir(), "amps");
 	}
 
+	public File getCertificateAuthoritiesDir() {
+		return new File(getSecurityDir(), "certificate-authorities");
+	}
+
+	public File getCertificateTemplatesDir() {
+		return new File(getSecurityDir(), "certificate-templates");
+	}
+
+	public File getExternalSecuritiesDir() {
+		return new File(getSecurityDir(), "external-security");
+	}
+
 	public File getPrivilegesDir() {
 		return new File(getSecurityDir(), "privileges");
 	}
 
+	public File getProtectedCollectionsDir() {
+		return new File(getSecurityDir(), "protected-collections");
+	}
+
 	public File getRolesDir() {
 		return new File(getSecurityDir(), "roles");
+	}
+
+	public File getTriggersDir(String databaseName) {
+		if (databaseName == null) {
+			return getTriggersDir();
+		}
+		File dir = getDatabasesDir();
+		File databaseDir = new File(dir, databaseName);
+		return new File(databaseDir, "triggers");
+	}
+
+	public File getTriggersDir() {
+		return new File(getBaseDir(), "triggers");
+	}
+
+	// This is expected to be relative to a database-specific directory
+	public File getPartitionsDir() {
+		return new File(getBaseDir(), "partitions");
+	}
+
+	// This is expected to be relative to a database-specific directory
+	public File getPartitionQueriesDir() {
+		return new File(getBaseDir(), "partition-queries");
 	}
 
 	public File getUsersDir() {
@@ -94,7 +134,7 @@ public class ConfigDir {
 
 	public File getProtectedPathsDir() { return new File(getSecurityDir(), "protected-paths"); }
 
-	public File getQueryRoleSetsDir() { return new File(getSecurityDir(), "query-rolesets"); }
+	public File getQueryRolesetsDir() { return new File(getSecurityDir(), "query-rolesets"); }
 
 	public File getServersDir() {
 		return new File(baseDir, "servers");
@@ -106,6 +146,18 @@ public class ConfigDir {
 
 	public File getCpfDir() {
 		return new File(baseDir, "cpf");
+	}
+
+	public File getDomainsDir() {
+		return new File(getCpfDir(), "domains");
+	}
+
+	public File getPipelinesDir() {
+		return new File(getCpfDir(), "pipelines");
+	}
+
+	public File getCpfConfigsDir() {
+		return new File(getCpfDir(), "cpf-configs");
 	}
 
 	public File getClustersDir() {
@@ -128,8 +180,16 @@ public class ConfigDir {
 		return new File(getFlexrepDir(), "configs");
 	}
 
+	public File getFlexrepPullsDir() {
+		return new File(getFlexrepDir(), "pulls");
+	}
+
 	public File getGroupsDir() {
 		return new File(baseDir, "groups");
+	}
+
+	public File getMimetypesDir() {
+		return new File(baseDir, "mimetypes");
 	}
 
 	public File getViewSchemasDir() {
@@ -149,7 +209,7 @@ public class ConfigDir {
 	}
 
 	public File getTemporalCollectionsLsqtDir() {
-		return new File(getTemporalCollectionsDir(), "lqst");
+		return new File(getTemporalCollectionsDir(), "lsqt");
 	}
 
 	public File getTasksDir() {
@@ -172,19 +232,15 @@ public class ConfigDir {
 		return baseDir;
 	}
 
-	public List<File> getContentDatabaseFiles() {
-		return contentDatabaseFiles;
-	}
-
-	public void setContentDatabaseFiles(List<File> contentDatabaseFiles) {
-		this.contentDatabaseFiles = contentDatabaseFiles;
-	}
-
 	public String getDefaultContentDatabaseFilename() {
 		return defaultContentDatabaseFilename;
 	}
 
 	public void setDefaultContentDatabaseFilename(String contentDatabaseFilename) {
 		this.defaultContentDatabaseFilename = contentDatabaseFilename;
+	}
+
+	public File getProjectDir() {
+		return projectDir;
 	}
 }

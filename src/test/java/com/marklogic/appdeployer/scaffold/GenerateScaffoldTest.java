@@ -1,19 +1,17 @@
 package com.marklogic.appdeployer.scaffold;
 
-import java.io.File;
-
-import com.marklogic.appdeployer.command.databases.DeployContentDatabasesCommand;
-import org.junit.Test;
-
 import com.marklogic.appdeployer.AbstractAppDeployerTest;
 import com.marklogic.appdeployer.ConfigDir;
-import com.marklogic.appdeployer.command.databases.DeployTriggersDatabaseCommand;
+import com.marklogic.appdeployer.command.databases.DeployOtherDatabasesCommand;
 import com.marklogic.appdeployer.command.restapis.DeployRestApiServersCommand;
 import com.marklogic.appdeployer.command.security.DeployRolesCommand;
 import com.marklogic.appdeployer.command.security.DeployUsersCommand;
 import com.marklogic.mgmt.resource.databases.DatabaseManager;
 import com.marklogic.mgmt.resource.security.RoleManager;
 import com.marklogic.mgmt.resource.security.UserManager;
+import org.junit.Test;
+
+import java.io.File;
 
 public class GenerateScaffoldTest extends AbstractAppDeployerTest {
 
@@ -35,16 +33,14 @@ public class GenerateScaffoldTest extends AbstractAppDeployerTest {
         appConfig.setConfigDir(new ConfigDir(new File(path, "src/main/ml-config")));
         appConfig.getModulePaths().clear();
         appConfig.getModulePaths().add(path + "/src/main/ml-modules");
-        appConfig.setCreateTriggersDatabase(true);
-        
-        initializeAppDeployer(new DeployRestApiServersCommand(), new DeployContentDatabasesCommand(), new DeployTriggersDatabaseCommand(),
+
+        initializeAppDeployer(new DeployRestApiServersCommand(), new DeployOtherDatabasesCommand(),
                 new DeployUsersCommand(), new DeployRolesCommand(), buildLoadModulesCommand());
         appDeployer.deploy(appConfig);
 
         try {
             DatabaseManager dbMgr = new DatabaseManager(manageClient);
             assertTrue(dbMgr.exists(appConfig.getContentDatabaseName()));
-            assertTrue(dbMgr.exists(appConfig.getTriggersDatabaseName()));
 
             assertTrue(new UserManager(manageClient).exists("sample-app-reader"));
 			assertTrue(new UserManager(manageClient).exists("sample-app-writer"));

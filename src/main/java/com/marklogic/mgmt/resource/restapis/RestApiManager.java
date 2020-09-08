@@ -6,7 +6,6 @@ import com.marklogic.mgmt.ManageClient;
 import com.marklogic.mgmt.PayloadParser;
 import com.marklogic.mgmt.resource.appservers.ServerManager;
 import com.marklogic.mgmt.resource.databases.DatabaseManager;
-import com.marklogic.rest.util.Fragment;
 import org.springframework.http.HttpMethod;
 import org.springframework.http.ResponseEntity;
 
@@ -17,9 +16,15 @@ public class RestApiManager extends LoggingObject {
 
 	private PayloadParser payloadParser = new PayloadParser();
 	private ManageClient client;
+	private String groupName;
 
 	public RestApiManager(ManageClient client) {
+		this(client, ServerManager.DEFAULT_GROUP);
+	}
+
+	public RestApiManager(ManageClient client, String groupName) {
 		this.client = client;
+		this.groupName = groupName;
 	}
 
 	public ResponseEntity<String> createRestApi(String json) {
@@ -44,9 +49,25 @@ public class RestApiManager extends LoggingObject {
 		return node.get("rest-api").get("name").textValue();
 	}
 
+	/**
+	 * Prior to ML 9.0-4, the /v1/rest-apis endpoint required that a server's url-rewriter have the string "rest-api"
+	 * somewhere in it. With 9.0-4, the url-rewriter must match the pattern:
+	 * <p>
+	 * ^/MarkLogic/rest-api/(8000-rewriter|rewriter|rewriter-noxdbc)\.xml$
+	 * </p>
+	 * <p>
+	 * It's not likely that a user's custom rewriter will fit that pattern, so this method no longer uses /v1/rest-apis,
+	 * opting to use ServerManager instead.
+	 * </p>
+	 * <p>
+	 * As of ml-app-deployer version 3.8.4, this now properly accounts for a group name.
+	 * </p>
+	 * @param name
+	 * @return
+	 */
 	public boolean restApiServerExists(String name) {
-		Fragment f = client.getXml("/v1/rest-apis?format=xml", "rapi", "http://marklogic.com/rest-api");
-		return f.elementExists(String.format("/rapi:rest-apis/rapi:rest-api[rapi:name = '%s']", name));
+		final String group = this.groupName != null ? this.groupName : ServerManager.DEFAULT_GROUP;
+		return new ServerManager(this.client, group).exists(name);
 	}
 
 	/**

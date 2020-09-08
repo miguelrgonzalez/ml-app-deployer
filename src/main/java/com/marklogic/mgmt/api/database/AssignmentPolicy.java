@@ -1,14 +1,42 @@
 package com.marklogic.mgmt.api.database;
 
+import javax.xml.bind.annotation.XmlAccessType;
+import javax.xml.bind.annotation.XmlAccessorType;
+import javax.xml.bind.annotation.XmlElement;
+
+@XmlAccessorType(XmlAccessType.FIELD)
 public class AssignmentPolicy {
 
-    private String assignmentPolicyName;
+	@XmlElement(name = "assignment-policy-name")
+	private String assignmentPolicyName;
 
-    public String getAssignmentPolicyName() {
-        return assignmentPolicyName;
-    }
+	@XmlElement(name = "lower-bound-included")
+	private Boolean lowerBoundIncluded;
 
-    public void setAssignmentPolicyName(String assignmentPolicyName) {
-        this.assignmentPolicyName = assignmentPolicyName;
-    }
+	@XmlElement(name = "default-partition")
+	private Integer defaultPartition;
+
+	public String getAssignmentPolicyName() {
+		return assignmentPolicyName;
+	}
+
+	public void setAssignmentPolicyName(String assignmentPolicyName) {
+		this.assignmentPolicyName = assignmentPolicyName;
+	}
+
+	public Boolean getLowerBoundIncluded() {
+		return lowerBoundIncluded;
+	}
+
+	public void setLowerBoundIncluded(Boolean lowerBoundIncluded) {
+		this.lowerBoundIncluded = lowerBoundIncluded;
+	}
+
+	public Integer getDefaultPartition() {
+		return defaultPartition;
+	}
+
+	public void setDefaultPartition(Integer defaultPartition) {
+		this.defaultPartition = defaultPartition;
+	}
 }

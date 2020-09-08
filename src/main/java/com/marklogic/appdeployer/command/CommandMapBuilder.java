@@ -6,22 +6,25 @@ import com.marklogic.appdeployer.command.alert.DeployAlertRulesCommand;
 import com.marklogic.appdeployer.command.appservers.DeployOtherServersCommand;
 import com.marklogic.appdeployer.command.appservers.UpdateRestApiServersCommand;
 import com.marklogic.appdeployer.command.clusters.ModifyLocalClusterCommand;
+import com.marklogic.appdeployer.command.cma.DeployConfigurationsCommand;
 import com.marklogic.appdeployer.command.cpf.DeployCpfConfigsCommand;
 import com.marklogic.appdeployer.command.cpf.DeployDomainsCommand;
 import com.marklogic.appdeployer.command.cpf.DeployPipelinesCommand;
-import com.marklogic.appdeployer.command.databases.DeployContentDatabasesCommand;
+import com.marklogic.appdeployer.command.data.LoadDataCommand;
 import com.marklogic.appdeployer.command.databases.DeployOtherDatabasesCommand;
-import com.marklogic.appdeployer.command.databases.DeploySchemasDatabaseCommand;
-import com.marklogic.appdeployer.command.databases.DeployTriggersDatabaseCommand;
 import com.marklogic.appdeployer.command.flexrep.DeployConfigsCommand;
 import com.marklogic.appdeployer.command.flexrep.DeployFlexrepCommand;
 import com.marklogic.appdeployer.command.flexrep.DeployTargetsCommand;
 import com.marklogic.appdeployer.command.forests.ConfigureForestReplicasCommand;
 import com.marklogic.appdeployer.command.forests.DeployCustomForestsCommand;
 import com.marklogic.appdeployer.command.groups.DeployGroupsCommand;
+import com.marklogic.appdeployer.command.hosts.AssignHostsToGroupsCommand;
 import com.marklogic.appdeployer.command.mimetypes.DeployMimetypesCommand;
 import com.marklogic.appdeployer.command.modules.DeleteTestModulesCommand;
 import com.marklogic.appdeployer.command.modules.LoadModulesCommand;
+import com.marklogic.appdeployer.command.plugins.InstallPluginsCommand;
+import com.marklogic.appdeployer.command.rebalancer.DeployPartitionQueriesCommand;
+import com.marklogic.appdeployer.command.rebalancer.DeployPartitionsCommand;
 import com.marklogic.appdeployer.command.restapis.DeployRestApiServersCommand;
 import com.marklogic.appdeployer.command.schemas.LoadSchemasCommand;
 import com.marklogic.appdeployer.command.security.*;
@@ -41,7 +44,7 @@ import java.util.Map;
 /**
  * The intent of this class is to construct a map of commonly used commands that can used in a variety of contexts - i.e.
  * ml-gradle or the Data Hub Framework - thus preventing those clients from having to duplicate this code.
- *
+ * <p>
  * A map is returned so that the commands can be grouped into lists, which is convenient for e.g. ml-gradle tasks that
  * want to execute all of the commands for a particular resource or set of resources - e.g. mlSecurityCommands for
  * invoking all commands pertaining to security resources.
@@ -58,9 +61,13 @@ public class CommandMapBuilder {
 		securityCommands.add(new DeployAmpsCommand());
 		securityCommands.add(new DeployCertificateTemplatesCommand());
 		securityCommands.add(new DeployCertificateAuthoritiesCommand());
+		securityCommands.add(new InsertCertificateHostsTemplateCommand());
 		securityCommands.add(new DeployExternalSecurityCommand());
 		securityCommands.add(new DeployPrivilegesCommand());
+		securityCommands.add(new DeployPrivilegeRolesCommand());
 		securityCommands.add(new DeployProtectedCollectionsCommand());
+		securityCommands.add(new DeployProtectedPathsCommand());
+		securityCommands.add(new DeployQueryRolesetsCommand());
 		map.put("mlSecurityCommands", securityCommands);
 
 		// Cluster
@@ -68,13 +75,21 @@ public class CommandMapBuilder {
 		clusterCommands.add(new ModifyLocalClusterCommand());
 		map.put("mlClusterCommands", clusterCommands);
 
+		// Configurations
+		List<Command> configurationCommands = new ArrayList<>();
+		configurationCommands.add(new DeployConfigurationsCommand());
+		map.put("mlConfigurationCommands", configurationCommands);
+
 		// Databases
 		List<Command> dbCommands = new ArrayList<Command>();
-		dbCommands.add(new DeployContentDatabasesCommand());
-		dbCommands.add(new DeployTriggersDatabaseCommand());
-		dbCommands.add(new DeploySchemasDatabaseCommand());
 		dbCommands.add(new DeployOtherDatabasesCommand());
 		map.put("mlDatabaseCommands", dbCommands);
+
+		// Database rebalancer
+		List<Command> rebalancerCommands = new ArrayList<>();
+		rebalancerCommands.add(new DeployPartitionsCommand());
+		rebalancerCommands.add(new DeployPartitionQueriesCommand());
+		map.put("mlRebalancerCommands", rebalancerCommands);
 
 		// Schemas
 		List<Command> schemaCommands = new ArrayList<>();
@@ -112,6 +127,11 @@ public class CommandMapBuilder {
 		cpfCommands.add(new DeployPipelinesCommand());
 		map.put("mlCpfCommands", cpfCommands);
 
+		// Data
+		List<Command> dataCommands = new ArrayList<>();
+		dataCommands.add(new LoadDataCommand());
+		map.put("mlDataCommands", dataCommands);
+
 		// Flexrep
 		List<Command> flexrepCommands = new ArrayList<Command>();
 		flexrepCommands.add(new DeployConfigsCommand());
@@ -128,6 +148,11 @@ public class CommandMapBuilder {
 		mimetypeCommands.add(new DeployMimetypesCommand());
 		map.put("mlMimetypeCommands", mimetypeCommands);
 
+		// Hosts
+		List<Command> hostCommands = new ArrayList<Command>();
+		hostCommands.add(new AssignHostsToGroupsCommand());
+		map.put("mlAssignHostsToGroups", hostCommands);
+
 		// Forests
 		List<Command> forestCommands = new ArrayList<Command>();
 		forestCommands.add(new DeployCustomForestsCommand());
@@ -137,6 +162,11 @@ public class CommandMapBuilder {
 		List<Command> replicaCommands = new ArrayList<Command>();
 		replicaCommands.add(new ConfigureForestReplicasCommand());
 		map.put("mlForestReplicaCommands", replicaCommands);
+
+		// Plugins
+		List<Command> pluginCommands = new ArrayList<>();
+		pluginCommands.add(new InstallPluginsCommand());
+		map.put("mlPluginCommands", pluginCommands);
 
 		// Tasks
 		List<Command> taskCommands = new ArrayList<Command>();

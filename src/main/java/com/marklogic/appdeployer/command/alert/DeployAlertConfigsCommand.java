@@ -22,10 +22,12 @@ public class DeployAlertConfigsCommand extends AbstractResourceCommand {
 	@Override
 	public void execute(CommandContext context) {
 		AppConfig appConfig = context.getAppConfig();
-		deployAlertConfigs(context, appConfig.getConfigDir(), appConfig.getContentDatabaseName());
-
-		for (File dir : appConfig.getConfigDir().getDatabaseResourceDirectories()) {
-			deployAlertConfigs(context, new ConfigDir(dir), dir.getName());
+		for (ConfigDir configDir : appConfig.getConfigDirs()) {
+			deployAlertConfigs(context, configDir, appConfig.getContentDatabaseName());
+			for (File dir : configDir.getDatabaseResourceDirectories()) {
+				String databaseName = determineDatabaseNameForDatabaseResourceDirectory(context, configDir, dir);
+				deployAlertConfigs(context, new ConfigDir(dir), databaseName);
+			}
 		}
 	}
 

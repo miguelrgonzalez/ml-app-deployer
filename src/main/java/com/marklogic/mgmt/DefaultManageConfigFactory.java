@@ -2,115 +2,153 @@ package com.marklogic.mgmt;
 
 import com.marklogic.mgmt.util.PropertySource;
 import com.marklogic.mgmt.util.PropertySourceFactory;
+import org.springframework.util.StringUtils;
+
+import java.util.LinkedHashMap;
+import java.util.Map;
+import java.util.function.BiConsumer;
 
 public class DefaultManageConfigFactory extends PropertySourceFactory implements ManageConfigFactory {
 
+	private Map<String, BiConsumer<ManageConfig, String>> propertyConsumerMap;
+
     public DefaultManageConfigFactory() {
         super();
+        initialize();
     }
 
     public DefaultManageConfigFactory(PropertySource propertySource) {
         super(propertySource);
+        initialize();
+    }
+
+    public void initialize() {
+	    // Order matters, so a LinkedHashMap is used to preserve the order
+	    propertyConsumerMap = new LinkedHashMap<>();
+
+	    propertyConsumerMap.put("mlManageHost", (config, prop) -> {
+		    logger.info("Manage host: " + prop);
+		    config.setHost(prop);
+	    });
+
+	    propertyConsumerMap.put("mlHost", (config, prop) -> {
+	    	if (!propertyExists("mlManageHost")) {
+			    logger.info("Manage host: " + prop);
+			    config.setHost(prop);
+		    }
+	    });
+
+	    propertyConsumerMap.put("mlManagePort", (config, prop) -> {
+		    logger.info("Manage port: " + prop);
+		    config.setPort(Integer.parseInt(prop));
+	    });
+
+	    propertyConsumerMap.put("mlManageUsername", (config, prop) -> {
+		    logger.info("Manage username: " + prop);
+		    config.setUsername(prop);
+	    });
+
+	    propertyConsumerMap.put("mlUsername", (config, prop) -> {
+	    	if (!propertyExists("mlManageUsername")) {
+			    logger.info("Manage username: " + prop);
+			    config.setUsername(prop);
+		    }
+		    if (!propertyExists("mlSecurityUsername") && !propertyExists("mlAdminUsername")) {
+			    logger.info("Manage user with security role: " + prop);
+			    config.setSecurityUsername(prop);
+		    }
+	    });
+
+	    propertyConsumerMap.put("mlManagePassword", (config, prop) -> {
+		    config.setPassword(prop);
+	    });
+
+	    propertyConsumerMap.put("mlPassword", (config, prop) -> {
+		    if (!propertyExists("mlManagePassword")) {
+			    config.setPassword(prop);
+		    }
+		    if (!propertyExists("mlSecurityPassword") && !propertyExists("mlAdminPassword")) {
+		    	config.setSecurityPassword(prop);
+		    }
+	    });
+
+	    propertyConsumerMap.put("mlManageScheme", (config, prop) -> {
+		    logger.info("Manage scheme: " + prop);
+		    config.setScheme(prop);
+	    });
+
+	    propertyConsumerMap.put("mlManageSimpleSsl", (config, prop) -> {
+		    logger.info("Use simple SSL for Manage app server: " + prop);
+		    config.setConfigureSimpleSsl(Boolean.parseBoolean(prop));
+	    });
+
+	    propertyConsumerMap.put("mlManageSslProtocol", (config, prop) -> {
+		    logger.info("Using SSL protocol for Manage app server: " + prop);
+		    config.setSslProtocol(prop);
+	    });
+
+	    propertyConsumerMap.put("mlManageUseDefaultKeystore", (config, prop) -> {
+	    	logger.info("Using default JVM keystore for SSL for Manage app server: " + prop);
+	    	config.setUseDefaultKeystore(Boolean.parseBoolean(prop));
+	    });
+
+	    propertyConsumerMap.put("mlManageTrustManagementAlgorithm", (config, prop) -> {
+		    logger.info("Using trust management algorithm for SSL for Manage app server: " + prop);
+		    config.setTrustManagementAlgorithm(prop);
+	    });
+
+	    propertyConsumerMap.put("mlManageCleanJsonPayloads", (config, prop) -> {
+		    logger.info("Cleaning Management API JSON payloads: " + prop);
+		    config.setCleanJsonPayloads(Boolean.parseBoolean(prop));
+	    });
+
+	    propertyConsumerMap.put("mlAdminUsername", (config, prop) -> {
+		    logger.info("mlAdminUsername is deprecated; please use mlSecurityUsername instead; Manage user with security role: " + prop);
+		    config.setSecurityUsername(prop);
+	    });
+
+	    propertyConsumerMap.put("mlAdminPassword", (config, prop) -> {
+		    logger.info("mlAdminPassword is deprecated; please use mlSecurityPassword instead");
+		    config.setSecurityPassword(prop);
+	    });
+
+	    propertyConsumerMap.put("mlSecurityUsername", (config, prop) -> {
+		    logger.info("Manage user with security role: " + prop);
+		    config.setSecurityUsername(prop);
+	    });
+
+	    propertyConsumerMap.put("mlSecurityPassword", (config, prop) -> {
+		    config.setSecurityPassword(prop);
+	    });
     }
 
     @Override
     public ManageConfig newManageConfig() {
-        ManageConfig c = new ManageConfig();
+        ManageConfig config = new ManageConfig();
 
-        String mlUsername = getProperty("mlUsername");
-        String mlPassword = getProperty("mlPassword");
-
-        String prop = getProperty("mlManageHost");
-        if (prop != null) {
-            logger.info("Manage host: " + prop);
-            c.setHost(prop);
-        } else {
-            prop = getProperty("mlHost");
-            if (prop != null) {
-                logger.info("Manage host: " + prop);
-                c.setHost(prop);
-            }
-        }
-
-        prop = getProperty("mlManagePort");
-        if (prop != null) {
-            logger.info("Manage port: " + prop);
-            c.setPort(Integer.parseInt(prop));
-        }
-
-        prop = getProperty("mlManageUsername");
-        if (prop != null) {
-            logger.info("Manage username: " + prop);
-            c.setUsername(prop);
-        } else if (mlUsername != null) {
-            logger.info("Manage username: " + mlUsername);
-            c.setUsername(mlUsername);
-        }
-
-        prop = getProperty("mlManagePassword");
-        if (prop != null) {
-            c.setPassword(prop);
-        } else if (mlPassword != null) {
-            c.setPassword(mlPassword);
-        }
-
-	    prop = getProperty("mlManageScheme");
-	    if (prop != null) {
-		    logger.info("Manage scheme: " + prop);
-		    c.setScheme(prop);
+	    for (String propertyName : propertyConsumerMap.keySet()) {
+		    String value = getProperty(propertyName);
+		    if (value != null) {
+			    propertyConsumerMap.get(propertyName).accept(config, value);
+		    }
 	    }
 
-	    prop = getProperty("mlManageSimpleSsl");
-	    if (prop != null) {
-		    logger.info("Use simple SSL for Manage app server: " + prop);
-		    c.setConfigureSimpleSsl(Boolean.parseBoolean(prop));
+	    if (!StringUtils.hasText(config.getSecurityUsername())) {
+	    	config.setSecurityUsername(config.getUsername());
+	    }
+	    if (!StringUtils.hasText(config.getSecurityPassword())) {
+	    	config.setSecurityPassword(config.getPassword());
 	    }
 
-	    prop = getProperty("mlManageCleanJsonPayloads");
-	    if (prop != null) {
-	    	logger.info("Cleaning Management API JSON payloads: " + prop);
-	    	c.setCleanJsonPayloads(Boolean.parseBoolean(prop));
-	    }
-
-	    prop = getProperty("mlAdminUsername");
-        if (prop != null) {
-            logger.info("Manage admin username: " + prop);
-            c.setAdminUsername(prop);
-        } else if (mlUsername != null) {
-            logger.info("Manage admin username: " + mlUsername);
-            c.setAdminUsername(mlUsername);
-        } else {
-            c.setAdminUsername(c.getUsername());
-        }
-
-        prop = getProperty("mlAdminPassword");
-        if (prop != null) {
-            c.setAdminPassword(prop);
-        } else if (mlPassword != null) {
-            c.setAdminPassword(mlPassword);
-        } else {
-            c.setAdminPassword(c.getPassword());
-        }
-
-	    prop = getProperty("mlAdminPort");
-	    if (prop != null) {
-		    logger.info("Admin port: " + prop);
-		    c.setAdminPort(Integer.parseInt(prop));
-	    }
-
-	    prop = getProperty("mlAdminScheme");
-	    if (prop != null) {
-		    logger.info("Admin scheme: " + prop);
-		    c.setAdminScheme(prop);
-	    }
-
-	    prop = getProperty("mlAdminSimpleSsl");
-	    if (prop != null) {
-		    logger.info("Use simple SSL for Admin app server: " + prop);
-		    c.setAdminConfigureSimpleSsl(Boolean.parseBoolean(prop));
-	    }
-
-        return c;
+        return config;
     }
 
+	/**
+	 * This is provided so that a client can easily print out a list of all the supported properties.
+	 *
+	 * @return
+	 */
+	public Map<String, BiConsumer<ManageConfig, String>> getPropertyConsumerMap() {
+		return propertyConsumerMap;
+	}
 }

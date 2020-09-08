@@ -1,16 +1,22 @@
 package com.marklogic.appdeployer.export;
 
 import com.marklogic.appdeployer.export.appservers.ServerExporter;
+import com.marklogic.appdeployer.export.cpf.CpfConfigExporter;
+import com.marklogic.appdeployer.export.cpf.DomainExporter;
+import com.marklogic.appdeployer.export.cpf.PipelineExporter;
 import com.marklogic.appdeployer.export.databases.DatabaseExporter;
 import com.marklogic.appdeployer.export.groups.GroupExporter;
+import com.marklogic.appdeployer.export.impl.AbstractNamedResourceExporter;
 import com.marklogic.appdeployer.export.impl.CompositeResourceExporter;
 import com.marklogic.appdeployer.export.security.AmpExporter;
 import com.marklogic.appdeployer.export.security.PrivilegeExporter;
 import com.marklogic.appdeployer.export.security.RoleExporter;
 import com.marklogic.appdeployer.export.security.UserExporter;
 import com.marklogic.appdeployer.export.tasks.TaskExporter;
+import com.marklogic.appdeployer.export.triggers.TriggerExporter;
 import com.marklogic.client.ext.helper.LoggingObject;
 import com.marklogic.mgmt.ManageClient;
+import com.marklogic.mgmt.selector.AbstractNameMatchingResourceSelector;
 import com.marklogic.mgmt.selector.ResourceSelection;
 import com.marklogic.mgmt.selector.ResourceSelector;
 
@@ -24,6 +30,7 @@ public class Exporter extends LoggingObject {
 	private CompositeResourceExporter compositeExporter;
 	private ManageClient manageClient;
 	private String groupName;
+	private String triggersDatabase;
 
 	public static Exporter client(ManageClient manageClient) {
 		return new Exporter(manageClient);
@@ -46,14 +53,24 @@ public class Exporter extends LoggingObject {
 	}
 
 	public Exporter select(ResourceSelector selector) {
+		// TODO A bit hacky here... may want an interface of e.g. TriggersDatabaseAware
+		if (selector instanceof AbstractNameMatchingResourceSelector) {
+			((AbstractNameMatchingResourceSelector)selector).setTriggersDatabase(triggersDatabase);
+		}
+
 		ResourceSelection selection = selector.selectResources(manageClient);
 		amps(selection.getAmpUriRefs());
+		cpfConfigs(triggersDatabase, selection.getCpfConfigNames());
 		databases(selection.getDatabaseNames());
+		domains(triggersDatabase, selection.getDomainNames());
+		groups(selection.getGroupNames());
+		pipelines(triggersDatabase, selection.getPipelineNames());
 		privilegesExecute(selection.getPrivilegeExecuteNames());
 		privilegesUri(selection.getPrivilegeUriNames());
 		roles(selection.getRoleNames());
 		servers(selection.getServerNames());
 		tasks(selection.getTaskNames());
+		triggers(triggersDatabase, selection.getTriggerNames());
 		users(selection.getUserNames());
 		return this;
 	}
@@ -73,39 +90,64 @@ public class Exporter extends LoggingObject {
 	}
 
 	public Exporter amps(String... ampUriRefs) {
-		return add(new AmpExporter(manageClient, ampUriRefs));
+		return (ampUriRefs != null && ampUriRefs.length > 0) ? add(new AmpExporter(manageClient, ampUriRefs)) : this;
+	}
+
+	/**
+	 * A CPF config is identified by its domain name.
+	 *
+	 * @param databaseIdOrName
+	 * @param domainNames
+	 * @return
+	 */
+	public Exporter cpfConfigs(String databaseIdOrName, String... domainNames) {
+		return (domainNames != null && domainNames.length > 0) ? add(new CpfConfigExporter(manageClient, databaseIdOrName, domainNames)) : null;
 	}
 
 	public Exporter databases(String... databaseNames) {
-		return add(new DatabaseExporter(manageClient, databaseNames));
+		return (databaseNames != null && databaseNames.length > 0) ? add(new DatabaseExporter(manageClient, databaseNames)) : null;
+	}
+
+	public Exporter domains(String databaseIdOrName, String... domainNames) {
+		return (domainNames != null && domainNames.length > 0) ? add(new DomainExporter(manageClient, databaseIdOrName, domainNames)) : null;
 	}
 
 	public Exporter groups(String... groupNames) {
-		return add(new GroupExporter(manageClient, groupNames));
+		return (groupNames != null && groupNames.length > 0) ? add(new GroupExporter(manageClient, groupNames)) : null;
+	}
+
+	public Exporter pipelines(String databaseIdOrName, String... pipelineNames) {
+		return (pipelineNames != null && pipelineNames.length > 0) ? add(new PipelineExporter(manageClient, databaseIdOrName, pipelineNames)) : null;
 	}
 
 	public Exporter privilegesExecute(String... privilegeNames) {
-		return add(new PrivilegeExporter(manageClient, privilegeNames));
+		return (privilegeNames != null && privilegeNames.length > 0) ? add(new PrivilegeExporter(manageClient, privilegeNames)) : null;
 	}
 
 	public Exporter privilegesUri(String... privilegeNames) {
-		PrivilegeExporter ex = new PrivilegeExporter(manageClient, privilegeNames);
-		ex.setUriPrivilegeNames(privilegeNames);
-		return add(ex);
+		if (privilegeNames != null && privilegeNames.length > 0) {
+			PrivilegeExporter ex = new PrivilegeExporter(manageClient, privilegeNames);
+			ex.setUriPrivilegeNames(privilegeNames);
+			return add(ex);
+		}
+		return this;
 	}
 
 	public Exporter roles(String... roleNames) {
-		return add(new RoleExporter(manageClient, roleNames));
+		return (roleNames != null && roleNames.length > 0) ? add(new RoleExporter(manageClient, roleNames)) : null;
 	}
 
 	public Exporter servers(String... serverNames) {
-		return add(buildServerExporter(serverNames));
+		return (serverNames != null && serverNames.length > 0) ? add(buildServerExporter(serverNames)) : null;
 	}
 
 	public Exporter serversNoDatabases(String... serverNames) {
-		ServerExporter se = buildServerExporter(serverNames);
-		se.setExportDatabases(false);
-		return add(se);
+		if (serverNames != null && serverNames.length > 0) {
+			ServerExporter se = buildServerExporter(serverNames);
+			se.setExportDatabases(false);
+			return add(se);
+		}
+		return this;
 	}
 
 	protected ServerExporter buildServerExporter(String... serverNames) {
@@ -113,20 +155,36 @@ public class Exporter extends LoggingObject {
 	}
 
 	public Exporter tasks(String... taskNames) {
-		TaskExporter te;
-		if (groupName != null) {
-			te = new TaskExporter(groupName, manageClient, taskNames);
-		} else {
-			te = new TaskExporter(manageClient, taskNames);
+		if (taskNames != null && taskNames.length > 0) {
+			TaskExporter te;
+			if (groupName != null) {
+				te = new TaskExporter(groupName, manageClient, taskNames);
+			} else {
+				te = new TaskExporter(manageClient, taskNames);
+			}
+			return add(te);
 		}
-		return add(te);
+		return this;
+	}
+
+	public Exporter triggers(String databaseIdOrName, String... triggerNames) {
+		return (triggerNames != null && triggerNames.length > 0) ? add(new TriggerExporter(manageClient, databaseIdOrName, triggerNames)) : null;
 	}
 
 	public Exporter users(String... usernames) {
-		return add(new UserExporter(manageClient, usernames));
+		return (usernames != null && usernames.length > 0) ? add(new UserExporter(manageClient, usernames)) : null;
 	}
 
 	public void setGroupName(String groupName) {
 		this.groupName = groupName;
+	}
+
+	public Exporter withTriggersDatabase(String triggersDatabase) {
+		setTriggersDatabase(triggersDatabase);
+		return this;
+	}
+
+	public void setTriggersDatabase(String triggersDatabase) {
+		this.triggersDatabase = triggersDatabase;
 	}
 }

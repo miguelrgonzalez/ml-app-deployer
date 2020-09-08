@@ -1,23 +1,21 @@
 package com.marklogic.appdeployer.command.flexrep;
 
-import java.io.File;
-
+import com.marklogic.appdeployer.AbstractAppDeployerTest;
+import com.marklogic.appdeployer.command.cpf.DeployCpfConfigsCommand;
+import com.marklogic.appdeployer.command.cpf.DeployDomainsCommand;
+import com.marklogic.appdeployer.command.cpf.DeployPipelinesCommand;
 import com.marklogic.appdeployer.command.databases.DeployOtherDatabasesCommand;
 import com.marklogic.mgmt.resource.appservers.ServerManager;
 import com.marklogic.mgmt.resource.cpf.CpfConfigManager;
 import com.marklogic.mgmt.resource.cpf.DomainManager;
 import com.marklogic.mgmt.resource.cpf.PipelineManager;
+import com.marklogic.mgmt.resource.flexrep.ConfigManager;
+import com.marklogic.mgmt.resource.flexrep.PullManager;
+import com.marklogic.mgmt.resource.flexrep.TargetManager;
 import org.junit.After;
 import org.junit.Test;
 
-import com.marklogic.appdeployer.AbstractAppDeployerTest;
-import com.marklogic.appdeployer.command.cpf.DeployCpfConfigsCommand;
-import com.marklogic.appdeployer.command.cpf.DeployDomainsCommand;
-import com.marklogic.appdeployer.command.cpf.DeployPipelinesCommand;
-import com.marklogic.appdeployer.command.databases.DeployContentDatabasesCommand;
-import com.marklogic.appdeployer.command.databases.DeployTriggersDatabaseCommand;
-import com.marklogic.mgmt.resource.flexrep.ConfigManager;
-import com.marklogic.mgmt.resource.flexrep.TargetManager;
+import java.io.File;
 
 public class DeployFlexrepTest extends AbstractAppDeployerTest {
 
@@ -28,11 +26,11 @@ public class DeployFlexrepTest extends AbstractAppDeployerTest {
 
     @Test
     public void configureMaster() {
-        appConfig.getConfigDir().setBaseDir(new File("src/test/resources/sample-app/flexrep-config"));
+        appConfig.getFirstConfigDir().setBaseDir(new File("src/test/resources/sample-app/flexrep-config"));
 
-        initializeAppDeployer(new DeployContentDatabasesCommand(1), new DeployTriggersDatabaseCommand(),
+        initializeAppDeployer(
                 new DeployCpfConfigsCommand(), new DeployDomainsCommand(), new DeployPipelinesCommand(),
-                new DeployConfigsCommand(), new DeployTargetsCommand(), new DeployOtherDatabasesCommand());
+                new DeployConfigsCommand(), new DeployTargetsCommand(), new DeployOtherDatabasesCommand(1));
 
         appDeployer.deploy(appConfig);
         assertConfigAndTargetAreDeployed();
@@ -49,7 +47,7 @@ public class DeployFlexrepTest extends AbstractAppDeployerTest {
 
     @Test
     public void noFlexrepDir() {
-        appConfig.getConfigDir().setBaseDir(new File("src/test/resources/sample-app/empty-ml-config"));
+        appConfig.getFirstConfigDir().setBaseDir(new File("src/test/resources/sample-app/empty-ml-config"));
 
         initializeAppDeployer(new DeployTargetsCommand());
 
@@ -59,20 +57,21 @@ public class DeployFlexrepTest extends AbstractAppDeployerTest {
 
     @Test
     public void masterFlexrep() {
-        appConfig.getConfigDir().setBaseDir(new File("src/test/resources/sample-app/flexrep-combined"));
+        appConfig.getFirstConfigDir().setBaseDir(new File("src/test/resources/sample-app/flexrep-combined"));
 
         appConfig.setFlexrepPath("master");
-        initializeAppDeployer(new DeployContentDatabasesCommand(1), new DeployTriggersDatabaseCommand(), new DeployFlexrepCommand());
+        initializeAppDeployer(new DeployOtherDatabasesCommand(1), new DeployFlexrepCommand());
 
         appDeployer.deploy(appConfig);
 
         final String domainName = "master-domain";
         final String db = appConfig.getContentDatabaseName();
+        final String triggersDb = appConfig.getTriggersDatabaseName();
         assertTrue(new ServerManager(manageClient).exists("master-flexrep-server"));
-        assertTrue(new DomainManager(manageClient).exists(appConfig.getTriggersDatabaseName(), domainName));
-        assertTrue(new PipelineManager(manageClient).exists(appConfig.getTriggersDatabaseName(), "Flexible Replication"));
-        assertTrue(new PipelineManager(manageClient).exists(appConfig.getTriggersDatabaseName(), "Status Change Handling"));
-        assertTrue(new CpfConfigManager(manageClient).exists(appConfig.getTriggersDatabaseName(), domainName));
+        assertTrue(new DomainManager(manageClient, triggersDb).exists(domainName));
+        assertTrue(new PipelineManager(manageClient, triggersDb).exists("Flexible Replication"));
+        assertTrue(new PipelineManager(manageClient, triggersDb).exists("Status Change Handling"));
+        assertTrue(new CpfConfigManager(manageClient, triggersDb).exists(domainName));
         assertTrue(new ConfigManager(manageClient, db).exists(domainName));
         assertTrue(new TargetManager(manageClient, db, domainName).exists("master-domain-target"));
 
@@ -82,26 +81,58 @@ public class DeployFlexrepTest extends AbstractAppDeployerTest {
 
     @Test
     public void replicaFlexrep() {
-        appConfig.getConfigDir().setBaseDir(new File("src/test/resources/sample-app/flexrep-combined"));
+        appConfig.getFirstConfigDir().setBaseDir(new File("src/test/resources/sample-app/flexrep-combined"));
 
         appConfig.setFlexrepPath("replica");
-        initializeAppDeployer(new DeployContentDatabasesCommand(1), new DeployTriggersDatabaseCommand(), new DeployFlexrepCommand());
+        initializeAppDeployer(new DeployOtherDatabasesCommand(1), new DeployFlexrepCommand());
 
         appDeployer.deploy(appConfig);
 
         final String domainName = "replica-domain";
         final String db = appConfig.getContentDatabaseName();
+        final String triggersDb = appConfig.getTriggersDatabaseName();
         assertTrue(new ServerManager(manageClient).exists("replica-flexrep-server"));
-        assertTrue(new DomainManager(manageClient).exists(appConfig.getTriggersDatabaseName(), domainName));
-        assertTrue(new PipelineManager(manageClient).exists(appConfig.getTriggersDatabaseName(), "Flexible Replication"));
-        assertTrue(new PipelineManager(manageClient).exists(appConfig.getTriggersDatabaseName(), "Status Change Handling"));
-        assertTrue(new CpfConfigManager(manageClient).exists(appConfig.getTriggersDatabaseName(), domainName));
+        assertTrue(new DomainManager(manageClient, triggersDb).exists(domainName));
+        assertTrue(new PipelineManager(manageClient, triggersDb).exists("Flexible Replication"));
+        assertTrue(new PipelineManager(manageClient, triggersDb).exists("Status Change Handling"));
+        assertTrue(new CpfConfigManager(manageClient, triggersDb).exists(domainName));
         assertTrue(new ConfigManager(manageClient, db).exists(domainName));
         assertTrue(new TargetManager(manageClient, db, domainName).exists("replica-domain-target"));
 
         undeploySampleApp();
         assertFalse(new ServerManager(manageClient).exists("master-flexrep-server"));
     }
+
+	@Test
+	public void deployPullConfiguration() {
+		appConfig.getFirstConfigDir().setBaseDir(new File("src/test/resources/sample-app/flexrep-config"));
+
+		initializeAppDeployer(
+			new DeployCpfConfigsCommand(), new DeployDomainsCommand(), new DeployPipelinesCommand(),
+			new DeployConfigsCommand(), new DeployTargetsCommand(), new DeployOtherDatabasesCommand(1), new DeployPullsCommand());
+
+		try {
+			appDeployer.deploy(appConfig);
+
+			assertConfigAndTargetAreDeployed();
+
+			final String pullName = "docs2go";
+			PullManager pullManager = new PullManager(manageClient, "other-sample-app-content");
+			assertTrue(pullManager.exists(pullName));
+
+			// Run deploy again to make sure nothing blows up
+			appDeployer.deploy(appConfig);
+
+			ConfigManager mgr = new ConfigManager(manageClient, appConfig.getContentDatabaseName());
+			mgr.deleteAllConfigs();
+			assertTrue("All of the configs should have been deleted, including their targets", mgr.getAsXml()
+				.getListItemIdRefs().isEmpty());
+
+		} finally {
+			undeploySampleApp();
+			assertFalse(new ServerManager(manageClient).exists("master-flexrep-server"));
+		}
+	}
 
     private void assertConfigAndTargetAreDeployed() {
         final String domainName = "sample-app-domain-1";

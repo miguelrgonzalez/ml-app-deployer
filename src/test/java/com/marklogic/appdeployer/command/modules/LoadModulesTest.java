@@ -3,6 +3,8 @@ package com.marklogic.appdeployer.command.modules;
 import com.marklogic.appdeployer.AbstractAppDeployerTest;
 import com.marklogic.appdeployer.command.restapis.DeployRestApiServersCommand;
 import com.marklogic.client.ext.modulesloader.impl.DefaultFileFilter;
+import com.marklogic.client.ext.modulesloader.impl.DefaultModulesLoader;
+import com.marklogic.client.ext.modulesloader.impl.PropertiesModuleManager;
 import com.marklogic.junit.Fragment;
 import com.marklogic.junit.PermissionsFragment;
 import com.marklogic.xcc.template.XccTemplate;
@@ -11,15 +13,16 @@ import org.junit.Before;
 import org.junit.Test;
 
 import java.io.File;
+import java.util.regex.Pattern;
 
 public class LoadModulesTest extends AbstractAppDeployerTest {
 
-	private XccTemplate xccTemplate;
+	private XccTemplate modulesXccTemplate;
 
 	@Before
 	public void setup() {
-		xccTemplate = new XccTemplate(format("xcc://%s:%s@%s:8000/%s", appConfig.getRestAdminUsername(),
-			appConfig.getRestAdminPassword(), appConfig.getHost(), appConfig.getModulesDatabaseName()));
+		modulesXccTemplate = new XccTemplate(appConfig.getHost(), appConfig.getAppServicesPort(), appConfig.getRestAdminUsername(),
+			appConfig.getRestAdminPassword(), appConfig.getModulesDatabaseName());
 	}
 
 	@After
@@ -63,17 +66,24 @@ public class LoadModulesTest extends AbstractAppDeployerTest {
 		}
 
 		appConfig.setModuleTimestampsPath("build/custom-path.properties");
-		initializeAppDeployer(new DeployRestApiServersCommand(true), new LoadModulesCommand());
+		LoadModulesCommand command = new LoadModulesCommand();
+		initializeAppDeployer(new DeployRestApiServersCommand(true), command);
 		appDeployer.deploy(appConfig);
 		assertTrue("The custom file should have been created when the modules were loaded", customFile.exists());
+
+		DefaultModulesLoader loader = (DefaultModulesLoader) command.getModulesLoader();
+		PropertiesModuleManager manager = (PropertiesModuleManager) loader.getModulesManager();
+		assertEquals("The host should have been set on the PropertiesModuleManager via DefaultModulesLoaderFactory " +
+			"so that module timestamps account for the host", appConfig.getHost(), manager.getHost());
 	}
 
 	@Test
 	public void loadModulesFromMultiplePaths() {
+		// Setting batch size just to verify that nothing blows up when doing so
+		appConfig.setModulesLoaderBatchSize(1);
 		appConfig.getModulePaths().add("src/test/resources/sample-app/build/mlRestApi/some-library/ml-modules");
 
 		initializeAppDeployer(new DeployRestApiServersCommand(true), buildLoadModulesCommand());
-
 		appDeployer.deploy(appConfig);
 
 		assertModuleExistsWithDefaultPermissions("sample-lib is loaded from /ext in the default path",
@@ -90,9 +100,7 @@ public class LoadModulesTest extends AbstractAppDeployerTest {
 
 		appDeployer.deploy(appConfig);
 
-		PermissionsFragment perms = getDocumentPermissions("/ext/sample-lib.xqy", xccTemplate);
-		perms.assertPermissionCount(6);
-
+		PermissionsFragment perms = getDocumentPermissions("/ext/sample-lib.xqy", modulesXccTemplate);
 		// Default permissions set by AppConfig
 		perms.assertPermissionExists("rest-admin", "read");
 		perms.assertPermissionExists("rest-admin", "update");
@@ -100,10 +108,6 @@ public class LoadModulesTest extends AbstractAppDeployerTest {
 
 		// Custom permission
 		perms.assertPermissionExists("app-user", "execute");
-
-		// Permissions that the REST API still applies, which seems like a bug
-		perms.assertPermissionExists("rest-reader", "read");
-		perms.assertPermissionExists("rest-writer", "update");
 	}
 
 	@Test
@@ -116,16 +120,17 @@ public class LoadModulesTest extends AbstractAppDeployerTest {
 		 * follows the Roxy convention by default and prefixes properties with "@ml.", our modules then need
 		 * "@ml.%%COLOR%%", for example.
 		 */
+		appConfig.setUseRoxyTokenPrefix(true);
 		appConfig.getCustomTokens().put("COLOR", "red");
 		appConfig.getCustomTokens().put("DESCRIPTION", "${COLOR} description");
 
 		initializeAppDeployer(new DeployRestApiServersCommand(true), buildLoadModulesCommand());
 		appDeployer.deploy(appConfig);
 
-		assertEquals("true", xccTemplate.executeAdhocQuery("doc-available('/ext/lib/test.xqy')"));
-		assertEquals("false", xccTemplate.executeAdhocQuery("doc-available('/ext/lib/test2.xqy')"));
+		assertEquals("true", modulesXccTemplate.executeAdhocQuery("doc-available('/ext/lib/test.xqy')"));
+		assertEquals("false", modulesXccTemplate.executeAdhocQuery("doc-available('/ext/lib/test2.xqy')"));
 
-		String xml = xccTemplate.executeAdhocQuery("doc('/ext/lib/test.xqy')");
+		String xml = modulesXccTemplate.executeAdhocQuery("doc('/ext/lib/test.xqy')");
 		Fragment f = parse(xml);
 		f.assertElementValue("/test/color", "red");
 		f.assertElementValue("/test/description", "red description");
@@ -133,7 +138,7 @@ public class LoadModulesTest extends AbstractAppDeployerTest {
 
 	@Test
 	public void testServerExists() {
-		appConfig.getConfigDir().setBaseDir(new File(("src/test/resources/sample-app/db-only-config")));
+		appConfig.getFirstConfigDir().setBaseDir(new File(("src/test/resources/sample-app/db-only-config")));
 		appConfig.setTestRestPort(8541);
 		initializeAppDeployer(new DeployRestApiServersCommand(true), buildLoadModulesCommand());
 
@@ -142,7 +147,7 @@ public class LoadModulesTest extends AbstractAppDeployerTest {
 		String[] uris = new String[]{"/Default/sample-app/rest-api/options/sample-app-options.xml",
 			"/Default/sample-app/rest-api/options/sample-app-options.xml"};
 		for (String uri : uris) {
-			assertEquals("true", xccTemplate.executeAdhocQuery(format("doc-available('%s')", uri)));
+			assertEquals("true", modulesXccTemplate.executeAdhocQuery(format("doc-available('%s')", uri)));
 		}
 	}
 
@@ -156,32 +161,28 @@ public class LoadModulesTest extends AbstractAppDeployerTest {
 		appDeployer.deploy(appConfig);
 
 		String xquery = "fn:count(cts:uri-match('/ext/**.xqy'))";
-		assertEquals(1, Integer.parseInt(xccTemplate.executeAdhocQuery(xquery)));
+		assertEquals(1, Integer.parseInt(modulesXccTemplate.executeAdhocQuery(xquery)));
+	}
+
+	@Test
+	public void includeModulesPattern() {
+		appConfig.setModuleFilenamesIncludePattern(Pattern.compile(".*/ext.*"));
+
+		initializeAppDeployer(new DeployRestApiServersCommand(true), buildLoadModulesCommand());
+		appDeployer.deploy(appConfig);
+
+		String xquery = "fn:count(cts:uris((), (), cts:true-query()))";
+		assertEquals("Should have the 3 /ext modules plus the REST API properties file, which was loaded when the REST server was created",
+			4, Integer.parseInt(modulesXccTemplate.executeAdhocQuery(xquery)));
 	}
 
 	private void assertModuleExistsWithDefaultPermissions(String message, String uri) {
-		assertEquals(message, "true", xccTemplate.executeAdhocQuery(format("fn:doc-available('%s')", uri)));
-		assertDefaultPermissionsExists(uri);
-	}
-
-	/**
-	 * Apparently, the REST API won't let you remove these 3 default permissions, they're always present.
-	 * <p>
-	 * And, now that we're loading modules via the REST API by default, rest-reader/read and rest-writer/update are
-	 * always present, at least on 8.0-6.3 and 9.0-1.1, which seems like a bug.
-	 */
-	private void assertDefaultPermissionsExists(String uri) {
-		PermissionsFragment perms = getDocumentPermissions(uri, xccTemplate);
-		perms.assertPermissionCount(5);
+		assertEquals(message, "true", modulesXccTemplate.executeAdhocQuery(format("fn:doc-available('%s')", uri)));
+		PermissionsFragment perms = getDocumentPermissions(uri, modulesXccTemplate);
 		perms.assertPermissionExists("rest-admin", "read");
 		perms.assertPermissionExists("rest-admin", "update");
 		perms.assertPermissionExists("rest-extension-user", "execute");
-
-		// Not really expected!
-		perms.assertPermissionExists("rest-reader", "read");
-		perms.assertPermissionExists("rest-writer", "update");
 	}
-
 }
 
 class TestFileFilter extends DefaultFileFilter {

@@ -1,0 +1,96 @@
+package com.marklogic.appdeployer.command.databases;
+
+import com.marklogic.appdeployer.AbstractAppDeployerTest;
+import com.marklogic.appdeployer.ConfigDir;
+import com.marklogic.mgmt.resource.databases.DatabaseManager;
+import org.junit.After;
+import org.junit.Test;
+
+import java.io.File;
+import java.util.ArrayList;
+import java.util.List;
+
+public class DeployDatabasesInOrderTest extends AbstractAppDeployerTest {
+
+	@After
+	public void teardown() {
+		undeploySampleApp();
+
+		DatabaseManager mgr = new DatabaseManager(manageClient);
+		assertFalse(mgr.exists("sample-app-A"));
+		assertFalse(mgr.exists("sample-app-B"));
+		assertFalse(mgr.exists("sample-app-C"));
+	}
+
+	@Test
+	public void test() {
+		appConfig.setConfigDir(new ConfigDir(new File("src/test/resources/sample-app/dhf-db-ordering")));
+
+		initializeAppDeployer(new DeployOtherDatabasesCommand());
+
+		appConfig.getCustomTokens().put("%%mlFinalDbName%%", "sample-data-hub-FINAL");
+		appConfig.getCustomTokens().put("%%mlFinalSchemasDbName%%", "sample-data-hub-final-SCHEMAS");
+		appConfig.getCustomTokens().put("%%mlFinalTriggersDbName%%", "sample-data-hub-final-TRIGGERS");
+		appConfig.getCustomTokens().put("%%mlModulesDbName%%", "sample-data-hub-MODULES");
+		appConfig.getCustomTokens().put("%%mlTestDbName%%", "sample-data-hub-TEST");
+
+		deploySampleApp();
+
+		DatabaseManager mgr = new DatabaseManager(manageClient);
+		assertTrue(mgr.exists("sample-data-hub-FINAL"));
+		assertTrue(mgr.exists("sample-data-hub-final-SCHEMAS"));
+		assertTrue(mgr.exists("sample-data-hub-final-TRIGGERS"));
+		assertTrue(mgr.exists("sample-data-hub-MODULES"));
+		assertTrue(mgr.exists("sample-data-hub-TEST"));
+
+		undeploySampleApp();
+
+		assertFalse(mgr.exists("sample-data-hub-FINAL"));
+		assertFalse(mgr.exists("sample-data-hub-final-SCHEMAS"));
+		assertFalse(mgr.exists("sample-data-hub-final-TRIGGERS"));
+		assertFalse(mgr.exists("sample-data-hub-MODULES"));
+		assertFalse(mgr.exists("sample-data-hub-TEST"));
+	}
+
+	/**
+	 * Tests 3 files that have filenames that would lead them to be processed in the wrong order if the command
+	 * doesn't sort them correctly.
+	 */
+	@Test
+	public void jsonResourceFiles() {
+		appConfig.setConfigDir(new ConfigDir(new File("src/test/resources/sample-app/databases-in-order")));
+		initializeAppDeployer(new DeployOtherDatabasesCommand(1));
+		deploySampleApp();
+
+		DatabaseManager mgr = new DatabaseManager(manageClient);
+		assertTrue(mgr.exists("sample-app-A"));
+		assertTrue(mgr.exists("sample-app-B"));
+		assertTrue(mgr.exists("sample-app-C"));
+	}
+
+	@Test
+	public void xmlResourceFiles() {
+		appConfig.setConfigDir(new ConfigDir(new File("src/test/resources/sample-app/databases-in-order-xml")));
+		initializeAppDeployer(new DeployOtherDatabasesCommand(1));
+		deploySampleApp();
+
+		DatabaseManager mgr = new DatabaseManager(manageClient);
+		assertTrue(mgr.exists("sample-app-A"));
+		assertTrue(mgr.exists("sample-app-B"));
+		assertTrue(mgr.exists("sample-app-C"));
+	}
+
+	@Test
+	public void notSortingProducesFailure() {
+		appConfig.setConfigDir(new ConfigDir(new File("src/test/resources/sample-app/databases-in-order")));
+		appConfig.setSortOtherDatabaseByDependencies(false);
+		initializeAppDeployer(new DeployOtherDatabasesCommand(1));
+
+		try {
+			deploySampleApp();
+			fail("Deploy should have failed because the databases were not sorted based on their dependencies");
+		} catch (Exception ex) {
+			logger.info("Caught expected exception: " + ex.getMessage());
+		}
+	}
+}

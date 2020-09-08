@@ -1,11 +1,18 @@
 package com.marklogic.appdeployer.command.forests;
 
-import com.marklogic.appdeployer.AppConfig;
+import com.marklogic.appdeployer.ConfigDir;
 import com.marklogic.appdeployer.command.AbstractCommand;
 import com.marklogic.appdeployer.command.CommandContext;
 import com.marklogic.appdeployer.command.SortOrderConstants;
+import com.marklogic.mgmt.api.API;
+import com.marklogic.mgmt.api.configuration.Configuration;
+import com.marklogic.mgmt.api.configuration.Configurations;
+import com.marklogic.mgmt.api.forest.Forest;
+import com.marklogic.mgmt.mapper.DefaultResourceMapper;
+import com.marklogic.mgmt.mapper.ResourceMapper;
 import com.marklogic.mgmt.resource.databases.DatabaseManager;
 import com.marklogic.mgmt.resource.forests.ForestManager;
+import com.marklogic.mgmt.resource.hosts.DefaultHostNameProvider;
 import com.marklogic.mgmt.resource.hosts.HostManager;
 import org.springframework.util.StringUtils;
 
@@ -16,90 +23,158 @@ import java.util.Map;
 import java.util.Set;
 
 /**
- * This command is for a simple use case where all the forests created for a database have the same structure,
- * but possibly exist on different forests. For more precise control over how forests are created, please see
- * DeployCustomForestsCommand.
- *
- * Doesn't yet support deleting forests - currently assumed that this will be done by deleting a database.
+ * This command constructs forests based on properties found in the AppConfig object associated with the incoming
+ * CommandContext. For more precise control over how forests are created, please see DeployCustomForestsCommand.
+ * <p>
+ * Doesn't yet support deleting forests - currently assumes that this will be done by deleting a database.
+ * </p>
+ * <p>
+ * This class also does not support creating replica forests - these are handled by ConfigureForestReplicasCommand.
+ * </p>
  */
 public class DeployForestsCommand extends AbstractCommand {
 
-    public static final String DEFAULT_FOREST_PAYLOAD = "{\"forest-name\": \"%%FOREST_NAME%%\", \"host\": \"%%FOREST_HOST%%\", "
-            + "\"database\": \"%%FOREST_DATABASE%%\"}";
+	/**
+	 * This was added back in 3.8.2 to preserve backwards compatibility, as it was removed in 3.7.0.
+	 */
+	public static final String DEFAULT_FOREST_PAYLOAD = "{\"forest-name\": \"%%FOREST_NAME%%\", \"host\": \"%%FOREST_HOST%%\", "
+		+ "\"database\": \"%%FOREST_DATABASE%%\"}";
 
-    private int forestsPerHost = 1;
-    private String databaseName;
-    private String forestFilename;
-    private String forestPayload;
-    private boolean createForestsOnEachHost = true;
+	private int forestsPerHost = 1;
+	private String databaseName;
+	private String forestFilename;
+	private String forestPayload;
+	private boolean createForestsOnEachHost = true;
+	private HostCalculator hostCalculator;
 
-    public DeployForestsCommand() {
-        setExecuteSortOrder(SortOrderConstants.DEPLOY_FORESTS);
-    }
+	private ForestBuilder forestBuilder = new ForestBuilder();
 
-    /**
-     * Contrary to other commands that blindly process each file in a directory, this command first looks for a specific
-     * file, as defined by the forestFilename attribute. If that file is found, then its contents are used as the
-     * payload for creating forests. Otherwise, if the forestPayload attribute has been set, then its contents are used
-     * as the payload. If neither is true, then no forests are created.
-     */
-    @Override
-    public void execute(CommandContext context) {
-        String payload = null;
-        if (forestFilename != null) {
-            File dir = context.getAppConfig().getConfigDir().getForestsDir();
-            if (dir.exists()) {
-                File f = new File(dir, forestFilename);
-                if (f.exists()) {
-                    payload = copyFileToString(f);
-                }
-            }
-        }
+	/**
+	 * This was added back in 3.8.2 to preserve backwards compatibility, as it was removed in 3.7.0. If you use this
+	 * constructor, be sure to call setDatabaseName.
+	 */
+	public DeployForestsCommand() {
+		setExecuteSortOrder(SortOrderConstants.DEPLOY_FORESTS);
+	}
 
-        if (payload == null && StringUtils.hasText(forestPayload)) {
-            if (logger.isInfoEnabled()) {
-                logger.info("Creating forests using configured payload: " + forestPayload);
-            }
-            payload = forestPayload;
-        }
+	/**
+	 * This is the preferred constructor to use for this class, as it requires a database name, which is required for
+	 * this command to execute correctly.
+	 *
+	 * @param databaseName
+	 */
+	public DeployForestsCommand(String databaseName) {
+		this();
+		this.databaseName = databaseName;
+	}
 
-        if (payload != null) {
-            createForests(payload, context);
-        }
-    }
+	/**
+	 * Contrary to other commands that blindly process each file in a directory, this command first looks for a specific
+	 * file, as defined by the forestFilename attribute. If that file is found, then its contents are used as a
+	 * template for creating forests (note that this command will determine the host, name, and database for each forest
+	 * regardless of what's in the template).
+	 */
+	@Override
+	public void execute(CommandContext context) {
+		// Replicas are currently handled by ConfigureForestReplicasCommand
+		List<Forest> forests = buildForests(context, false);
 
-    /**
-     * This command manages a couple of its own tokens, as it's expected that the host and forest name should be
-     * dynamically generated based on what hosts exist and how many forests should be created on each host.
-     */
-    protected void createForests(String originalPayload, CommandContext context) {
-        ForestManager mgr = new ForestManager(context.getManageClient());
-        AppConfig appConfig = context.getAppConfig();
+		if (context.getAppConfig().getCmaConfig().isDeployForests() && !forests.isEmpty() && cmaEndpointExists(context)) {
+			createForestsViaCma(context, forests);
+		} else {
+			createForestsViaForestEndpoint(context, forests);
+		}
+	}
 
-        // Find out which hosts to create forests on
-        List<String> hostNames = new HostManager(context.getManageClient()).getHostNames();
-        hostNames = determineHostNamesForForest(context, hostNames);
+	protected void createForestsViaCma(CommandContext context, List<Forest> forests) {
+		Configuration config = new Configuration();
+		forests.forEach(forest -> config.addForest(forest.toObjectNode()));
+		new Configurations(config).submit(context.getManageClient());
+	}
 
-        // Find out how many forests exist already
-        int countOfExistingForests = new DatabaseManager(context.getManageClient()).getPrimaryForestIds(getForestDatabaseName(appConfig)).size();
-        int desiredNumberOfForests = hostNames.size() * forestsPerHost;
+	protected void createForestsViaForestEndpoint(CommandContext context, List<Forest> forests) {
+		ForestManager forestManager = new ForestManager(context.getManageClient());
+		for (Forest f : forests) {
+			forestManager.save(f.getJson());
+		}
+	}
 
-        // Loop over the number of forests to create, starting with count + 1, and iterating over the hosts
-        for (int i = countOfExistingForests + 1; i <= desiredNumberOfForests;) {
-            for (String hostName : hostNames) {
-                if (i <= desiredNumberOfForests) {
-                    String payload = payloadTokenReplacer.replaceTokens(originalPayload, appConfig, false);
-                    payload = payload.replace("%%FOREST_HOST%%", hostName);
-                    String forestName = getForestName(appConfig, i);
-                    payload = payload.replace("%%FOREST_NAME%%", forestName);
-                    payload = payload.replace("%%FOREST_DATABASE%%", getForestDatabaseName(appConfig));
-                    logger.info(format("Creating forest %s on host %s", forestName, hostName));
-                    mgr.save(payload);
-                }
-                i++;
-            }
-        }
-    }
+	/**
+	 * Public so that it can be reused without actually saving any of the forests.
+	 *
+	 * This also facilitates the creation of forests for many databases at one time. A client can call this on a set of
+	 * these commands to construct a list of many forests that can be created via CMA in one request.
+	 *
+	 * @param context
+	 * @param includeReplicas This command currently doesn't make use of this feature; it's here so that other clients
+	 *                        can get a preview of the forests to be created, including replicas.
+	 * @return
+	 */
+	public List<Forest> buildForests(CommandContext context, boolean includeReplicas) {
+		String template = buildForestTemplate(context, new ForestManager(context.getManageClient()));
+
+		List<String> hostNames = new HostManager(context.getManageClient()).getHostNames();
+		hostNames = determineHostNamesForForest(context, hostNames);
+
+		// Need to know what primary forests exist already in case more need to be added, or a new host has been added
+		List<Forest> forests = getExistingPrimaryForests(context, this.databaseName);
+		ForestPlan forestPlan = new ForestPlan(this.databaseName, hostNames)
+			.withTemplate(template)
+			.withForestsPerDataDirectory(this.forestsPerHost)
+			.withExistingForests(forests);
+
+		if (includeReplicas) {
+			Map<String, Integer> map = context.getAppConfig().getDatabaseNamesAndReplicaCounts();
+			if (map != null) {
+				int count = map.get(this.databaseName);
+				if (count > 0) {
+					forestPlan.withReplicaCount(count);
+				}
+			}
+		}
+
+		return forestBuilder.buildForests(forestPlan, context.getAppConfig());
+	}
+
+	protected List<Forest> getExistingPrimaryForests(CommandContext context, String databaseName) {
+		List<String> forestIds = new DatabaseManager(context.getManageClient()).getPrimaryForestIds(databaseName);
+		ForestManager forestMgr = new ForestManager(context.getManageClient());
+		ResourceMapper mapper = new DefaultResourceMapper(new API(context.getManageClient()));
+		List<Forest> forests = new ArrayList<>();
+		for (String forestId : forestIds) {
+			String json = forestMgr.getPropertiesAsJson(forestId);
+			forests.add(mapper.readResource(json, Forest.class));
+		}
+		return forests;
+	}
+
+	protected String buildForestTemplate(CommandContext context, ForestManager forestManager) {
+		String payload = null;
+		if (forestFilename != null) {
+			for (ConfigDir configDir : context.getAppConfig().getConfigDirs()) {
+				File dir = configDir.getForestsDir();
+				if (dir.exists()) {
+					File f = new File(dir, forestFilename);
+					if (f.exists()) {
+						payload = copyFileToString(f);
+					}
+				}
+			}
+		}
+
+		if (payload == null && StringUtils.hasText(forestPayload)) {
+			if (logger.isInfoEnabled()) {
+				logger.info("Creating forests using configured payload: " + forestPayload);
+			}
+			payload = forestPayload;
+		}
+
+		if (payload != null) {
+			return adjustPayloadBeforeSavingResource(context, null, payload);
+		}
+
+		return null;
+	}
 
 	/**
 	 * @param context
@@ -107,81 +182,74 @@ public class DeployForestsCommand extends AbstractCommand {
 	 * @return
 	 */
 	protected List<String> determineHostNamesForForest(CommandContext context, List<String> hostNames) {
-	    Set<String> databaseNames = context.getAppConfig().getDatabasesWithForestsOnOneHost();
-	    boolean onlyOnOneHost = databaseNames != null && databaseNames.contains(this.databaseName);
+		Set<String> databaseNames = context.getAppConfig().getDatabasesWithForestsOnOneHost();
+		boolean onlyOnOneHost = databaseNames != null && databaseNames.contains(this.databaseName);
 
-	    if (!createForestsOnEachHost || onlyOnOneHost) {
-		    String first = hostNames.get(0);
-		    logger.info(format("Only creating forests on the first host: " + first));
-		    hostNames = new ArrayList<>();
-		    hostNames.add(first);
-		    return hostNames;
-	    }
+		if (!createForestsOnEachHost || onlyOnOneHost) {
+			String first = hostNames.get(0);
+			logger.info(format("Only creating forests on the first host: " + first));
+			hostNames = new ArrayList<>();
+			hostNames.add(first);
+			return hostNames;
+		}
 
-	    Map<String, Set<String>> databaseHosts = context.getAppConfig().getDatabaseHosts();
-	    if (databaseHosts != null) {
-	    	Set<String> selectedHostNames = databaseHosts.get(this.databaseName);
-	    	if (selectedHostNames != null) {
-	    		List<String> newHostNames = new ArrayList<>();
-	    		for (String name : selectedHostNames) {
-	    			if (hostNames.contains(name)) {
-	    				newHostNames.add(name);
-				    } else {
-	    				logger.warn(format("Host '%s' for database '%s' is not recognized, ignoring", name, this.databaseName));
-				    }
-			    }
-			    return newHostNames;
-		    }
-	    }
+		if (hostCalculator == null) {
+			return new DefaultHostCalculator(new DefaultHostNameProvider(context.getManageClient())).calculateHostNames(this.databaseName, context);
+		}
 
-	    return hostNames;
-    }
+		return hostCalculator.calculateHostNames(this.databaseName, context);
+	}
 
-    protected String getForestName(AppConfig appConfig, int forestNumber) {
-        return databaseName + "-" + forestNumber;
-    }
+	public int getForestsPerHost() {
+		return forestsPerHost;
+	}
 
-    protected String getForestDatabaseName(AppConfig appConfig) {
-        return databaseName;
-    }
+	public void setForestsPerHost(int forestsPerHost) {
+		this.forestsPerHost = forestsPerHost;
+	}
 
-    public int getForestsPerHost() {
-        return forestsPerHost;
-    }
+	public String getDatabaseName() {
+		return databaseName;
+	}
 
-    public void setForestsPerHost(int forestsPerHost) {
-        this.forestsPerHost = forestsPerHost;
-    }
+	public String getForestFilename() {
+		return forestFilename;
+	}
 
-    public String getDatabaseName() {
-        return databaseName;
-    }
+	public void setForestFilename(String forestFilename) {
+		this.forestFilename = forestFilename;
+	}
 
-    public void setDatabaseName(String databaseName) {
-        this.databaseName = databaseName;
-    }
+	public String getForestPayload() {
+		return forestPayload;
+	}
 
-    public String getForestFilename() {
-        return forestFilename;
-    }
+	public void setForestPayload(String forestPayload) {
+		this.forestPayload = forestPayload;
+	}
 
-    public void setForestFilename(String forestFilename) {
-        this.forestFilename = forestFilename;
-    }
+	public boolean isCreateForestsOnEachHost() {
+		return createForestsOnEachHost;
+	}
 
-    public String getForestPayload() {
-        return forestPayload;
-    }
+	public void setCreateForestsOnEachHost(boolean createForestsOnEachHost) {
+		this.createForestsOnEachHost = createForestsOnEachHost;
+	}
 
-    public void setForestPayload(String forestPayload) {
-        this.forestPayload = forestPayload;
-    }
+	public void setHostCalculator(HostCalculator hostCalculator) {
+		this.hostCalculator = hostCalculator;
+	}
 
-    public boolean isCreateForestsOnEachHost() {
-        return createForestsOnEachHost;
-    }
+	/**
+	 * This was added back in 3.8.2 to preserve backwards compatibility, as it was removed in 3.7.0.
+	 *
+	 * @param databaseName
+	 */
+	public void setDatabaseName(String databaseName) {
+		this.databaseName = databaseName;
+	}
 
-    public void setCreateForestsOnEachHost(boolean createForestsOnEachHost) {
-        this.createForestsOnEachHost = createForestsOnEachHost;
-    }
+	public void setForestBuilder(ForestBuilder forestBuilder) {
+		this.forestBuilder = forestBuilder;
+	}
 }

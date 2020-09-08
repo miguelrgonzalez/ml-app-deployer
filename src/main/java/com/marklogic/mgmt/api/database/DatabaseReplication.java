@@ -14,7 +14,7 @@ public class DatabaseReplication {
 	private List<ForeignReplica> foreignReplica;
 
 	@XmlElement(name = "foreign-master")
-	private ForeignReplica foreignMaster;
+	private ForeignMaster foreignMaster;
 
 	public List<ForeignReplica> getForeignReplica() {
 		return foreignReplica;
@@ -24,11 +24,11 @@ public class DatabaseReplication {
 		this.foreignReplica = foreignReplica;
 	}
 
-	public ForeignReplica getForeignMaster() {
+	public ForeignMaster getForeignMaster() {
 		return foreignMaster;
 	}
 
-	public void setForeignMaster(ForeignReplica foreignMaster) {
+	public void setForeignMaster(ForeignMaster foreignMaster) {
 		this.foreignMaster = foreignMaster;
 	}
 }

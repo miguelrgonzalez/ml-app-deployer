@@ -1,6 +1,7 @@
 package com.marklogic.appdeployer.command.restapis;
 
 import com.marklogic.appdeployer.AppConfig;
+import com.marklogic.appdeployer.ConfigDir;
 import com.marklogic.appdeployer.command.AbstractCommand;
 import com.marklogic.appdeployer.command.CommandContext;
 import com.marklogic.appdeployer.command.SortOrderConstants;
@@ -59,8 +60,8 @@ public class DeployRestApiServersCommand extends AbstractCommand implements Undo
 	public void execute(CommandContext context) {
 		String payload = getRestApiPayload(context);
 		if (payload != null) {
-			RestApiManager mgr = new RestApiManager(context.getManageClient());
 			AppConfig appConfig = context.getAppConfig();
+			RestApiManager mgr = new RestApiManager(context.getManageClient(), appConfig.getGroupName());
 
 			mgr.createRestApi(payloadTokenReplacer.replaceTokens(payload, appConfig, false));
 
@@ -72,22 +73,50 @@ public class DeployRestApiServersCommand extends AbstractCommand implements Undo
 
 	protected String getRestApiPayload(CommandContext context) {
 		File f = findRestApiConfigFile(context);
-		if (f.exists()) {
+		if (f != null && f.exists()) {
 			return copyFileToString(f);
 		} else if (context.getAppConfig().isNoRestServer()) {
 			logger.info(format("Could not find REST API file at %s, will not deploy/undeploy a REST API server", f.getAbsolutePath()));
 			return null;
 		} else {
 			logger.info(format("Could not find REST API file at %s, will use default payload", f.getAbsolutePath()));
-			return getDefaultRestApiPayload();
+			return getDefaultRestApiPayload(context);
 		}
 	}
 
+	/**
+	 * Will always return a non-null file; if it can't find a file, returns a reference to the first file it tried.
+	 *
+	 * @param context
+	 * @return
+	 */
 	protected File findRestApiConfigFile(CommandContext context) {
 		if (restApiFilename != null) {
-			return new File(context.getAppConfig().getConfigDir().getBaseDir(), restApiFilename);
+			File restApiFile = null;
+			// Check each ConfigDir for the file, with the last one winning
+			for (ConfigDir configDir : context.getAppConfig().getConfigDirs()) {
+				File f = new File(configDir.getBaseDir(), restApiFilename);
+				if (f.exists()) {
+					restApiFile = f;
+				}
+			}
+			if (restApiFile == null) {
+				restApiFile = new File(context.getAppConfig().getFirstConfigDir().getBaseDir(), restApiFilename);
+			}
+			return restApiFile;
 		} else {
-			return context.getAppConfig().getConfigDir().getRestApiFile();
+			File restApiFile = null;
+			// Check each ConfigDir for the file, with the last one winning
+			for (ConfigDir configDir : context.getAppConfig().getConfigDirs()) {
+				File f = configDir.getRestApiFile();
+				if (f != null && f.exists()) {
+					restApiFile = f;
+				}
+			}
+			if (restApiFile == null) {
+				restApiFile = context.getAppConfig().getFirstConfigDir().getRestApiFile();
+			}
+			return restApiFile;
 		}
 	}
 
@@ -143,8 +172,12 @@ public class DeployRestApiServersCommand extends AbstractCommand implements Undo
 		}
 	}
 
-	protected String getDefaultRestApiPayload() {
-		return RestApiUtil.buildDefaultRestApiJson();
+	protected String getDefaultRestApiPayload(CommandContext context) {
+		// Use contentForestsPerHost in case the user does not have a database file for the content database that would
+		// otherwise control the number of forests created (as it would be created before the REST API instance is
+		// created)
+		Integer count = context.getAppConfig().getContentForestsPerHost();
+		return count != null ? RestApiUtil.buildDefaultRestApiJson(count) : RestApiUtil.buildDefaultRestApiJson();
 	}
 
 	/**
@@ -158,13 +191,13 @@ public class DeployRestApiServersCommand extends AbstractCommand implements Undo
 	 * @return
 	 */
 	protected boolean deleteRestApi(String serverName, String groupName, ManageClient manageClient,
-									boolean includeModules, boolean includeContent) {
+	                                boolean includeModules, boolean includeContent) {
 		RestApiDeletionRequest request = new RestApiDeletionRequest(serverName, groupName);
 		request.setIncludeContent(includeContent);
 		request.setIncludeModules(includeModules);
 		request.setDeleteContentReplicaForests(isDeleteContentReplicaForests());
 		request.setDeleteModulesReplicaForests(isDeleteModulesReplicaForests());
-		return new RestApiManager(manageClient).deleteRestApi(request);
+		return new RestApiManager(manageClient, groupName).deleteRestApi(request);
 	}
 
 	public boolean isDeleteModulesDatabase() {

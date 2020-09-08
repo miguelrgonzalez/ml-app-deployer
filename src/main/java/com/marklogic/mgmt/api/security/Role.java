@@ -1,6 +1,6 @@
 package com.marklogic.mgmt.api.security;
 
-import com.marklogic.mgmt.ManageClient;
+import com.fasterxml.jackson.annotation.JsonIgnore;
 import com.marklogic.mgmt.api.API;
 import com.marklogic.mgmt.api.Resource;
 import com.marklogic.mgmt.resource.ResourceManager;
@@ -8,7 +8,6 @@ import com.marklogic.mgmt.resource.security.RoleManager;
 
 import javax.xml.bind.annotation.*;
 import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.List;
 
 @XmlRootElement(name = "role-properties")
@@ -37,17 +36,11 @@ public class Role extends Resource {
 	@XmlElementWrapper(name = "collections")
 	private List<String> collection;
 
-	public static void main(String[] args) {
-		API api = new API(new ManageClient());
-		Role r = new Role();
-		r.setRoleName("hi");
-		r.setObjectMapper(api.getObjectMapper());
-		r.setExternalName(Arrays.asList("name1", "name2"));
-		System.out.println(r.getJson());
-
+	public Role() {
 	}
 
-	public Role() {
+	public Role(String roleName) {
+		this(null, roleName);
 	}
 
 	public Role(API api, String roleName) {
@@ -55,12 +48,34 @@ public class Role extends Resource {
 		this.roleName = roleName;
 	}
 
+	public boolean hasPermissionsOrRoles() {
+		return (role != null && !role.isEmpty()) || (permission != null && !permission.isEmpty());
+	}
+
+	@JsonIgnore
+	public List<String> getDependentRoleNames() {
+		List<String> names = new ArrayList<>();
+		if (role != null) {
+			names.addAll(role);
+		}
+		if (permission != null) {
+			permission.forEach(p -> {
+				if (!names.contains(p.getRoleName())) {
+					names.add(p.getRoleName());
+				}
+			});
+		}
+		return names;
+	}
+
 	public void clearPermissionsAndRoles() {
 		if (role != null) {
 			role.clear();
+			role = null;
 		}
 		if (permission != null) {
 			permission.clear();
+			permission = null;
 		}
 	}
 
